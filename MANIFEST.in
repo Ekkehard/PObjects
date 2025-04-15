@@ -1,0 +1,3 @@
+include PObjects/requirements.txt
+include PObjects/*.md
+include PObjects/*.py
