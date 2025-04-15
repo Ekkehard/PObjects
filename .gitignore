@@ -1,0 +1,83 @@
+#
+# .gitignore Implementation
+#
+# Version   : 2.0.0
+#
+# Purpose   : Define all files to be ignored by git in PObject
+#
+# Comments  :
+#
+# Known Bugs: none
+#
+# Author    : W. Ekkehard Blanz <Ekkehard.Blanz@gmail.com> (C) 2025
+#
+# Copyright : See COPYING file that comes with this distribution
+#
+# File history:
+#
+#     Date          | Author            | Modification
+#   ----------------+-------------------+---------------------------------------
+#   Fri Apr 11 2025 | W. Ekkehard Blanz | Rev 1.20 created from primitive
+#                   |                   |
+#
+
+# our Makefile is a symlink that would be a mess to share
+Makefile
+
+# these are generated during debug and/or tracing
+*.log
+tracelevel.rc
+
+# Python file we don't need in git
+*.pyc
+__pycache__
+
+
+# These are temporary LaTeX files
+*.aux
+*.blg
+*.bbl
+*.toc
+*.eps
+*.ilg
+*.ind
+*.out
+
+# Here starts the Linux-specific part that has no use under Windows
+.directory
+.depend
+core
+*~
+.*.swp
+*.map
+*.[oa]
+*.so
+*.kate-swp
+*.gcda
+*.gcno
+*.backup
+.kdev4
+*.kdev4
+*.code-workspace
+
+# Here starts the Windows-specific part that has no use under Linux
+.vs
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.pyproj
+readme.txt
+*.obj
+*.exe
+*.lib
+*.dll
+*.windowsDepend
+*.exp
+*.pdb
+
+# And here we exclude some Mac-specific files that nobody else needs
+.DS_Store
+.idea
+*.iml
+*.xcodeproj
+
