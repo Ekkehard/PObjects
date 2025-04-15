@@ -190,5 +190,3 @@ class Const( metaclass=MetaConst ):
     # pylint: disable=unnecessary-pass
     pass
 
-
-
