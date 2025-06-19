@@ -1074,7 +1074,7 @@ class Energy( PObject ):
         elif "cal" == unit:
             value *= Energy.__calConv
         elif "erg" == unit:
-            value *= Energu.__ergConv
+            value *= Energy.__ergConv
         elif "J" != unit:
             raise ValueError( "Wrong energy unit specified: " + unit )
 
@@ -1853,6 +1853,7 @@ if "__main__" == __name__:
     sys.path.append( os.path.join( os.path.dirname( __file__ ), os.pardir ) )
     from common import enableUnicodeOutput, idTupleFromFile, printCopyright, \
                        ReturnCodes
+    from PObjects import Const
 
 
     def printUsage():

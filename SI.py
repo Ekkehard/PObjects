@@ -149,11 +149,12 @@ class Unit():
                               "as arguments" )
 
         self.__strictAscii = strictAscii
-        unit = unit.replace( "^", "**" )
 
         if tuple == type( unit ):
             self.__numerator, self.__denominator = unit
         else:
+            # support scipy's way of indicating exponents
+            unit = unit.replace( "^", "**" )
             if "Ohm" == unit: unit = "Ω"
             if unit.count( "/" ) > 1:
                 raise ValueError( "Can only use one '/' - use parentheses "

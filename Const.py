@@ -60,7 +60,7 @@ class Const( classutilities.ClassPropertiesMixin ):
     access all the constants that are not implemented as shortcuts here.  The 
     constants currently supported here are ("g" isn't really a constant but used
     often):
-    - e         elementary charge
+    - e_0       elementary charge
     - m_e       electron mass
     - amu       atomic mass unit
     - m_p       proton mass
@@ -97,7 +97,7 @@ class Const( classutilities.ClassPropertiesMixin ):
                         precision=scipy.constants.physical_constants[name][2] )
                         
     @classutilities.classproperty
-    def e( cls ):
+    def e_0( cls ):
         """!
         @brief elementary charge
         """
@@ -108,7 +108,7 @@ class Const( classutilities.ClassPropertiesMixin ):
         """!
         @brief electron mass
         """
-        return Const.fromScipy( 'elementary mass' )
+        return Const.fromScipy( 'electron mass' )
 
     @classutilities.classproperty
     def amu( cls ):
