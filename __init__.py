@@ -1,4 +1,4 @@
-# Python Implementation: Pobjects
+# Python Implementation: PObjects
 # -*- coding: utf-8 -*-
 ##
 # @file       __init__.py
@@ -66,7 +66,6 @@
 #   Tue Jan 28 2025 | Ekkehard Blanz | added __version__ and __all__
 #                   |                |
 
-from .Const import Const
 from .SI import Unit, Prefix
 from .PObject import sqrt, PObject, Energy, Temperature, Time, Mass, Length, \
                      Frequency, ImperialLengthMisfits
@@ -74,12 +73,13 @@ from .ESeries import ESeries
 from .EEObjects import EEObject, Voltage, Current, \
                        Resistor, Capacitor, Inductor
 from .EEIterators import Erange, Rrange, Crange, Lrange
+from .Const import Const
 
 
 
 __version__ = '2.0.0'
-__all__ = ['Const', 'Unit', 'Prefix', 'sqrt', 'PObject', 'Energy',
-           'Temperature', 'Time', 'Mass', 'Length', 'Frequency',
-           'ImperialLengthMisfits', 'Eseries', 'EEObject', 'Voltage', 'Current',
-           'Resistor', 'Capacitor', 'Inductor', 'Erange', 'Rrange', 'Crange',
-           'Lrange']
+#__all__ = ['Const', 'Unit', 'Prefix', 'sqrt', 'PObject', 'Energy',
+#           'Temperature', 'Time', 'Mass', 'Length', 'Frequency',
+#           'ImperialLengthMisfits', 'ESeries', 'EEObject', 'Voltage', 'Current',
+#           'Resistor', 'Capacitor', 'Inductor', 'Erange', 'Rrange', 'Crange',
+#           'Lrange']

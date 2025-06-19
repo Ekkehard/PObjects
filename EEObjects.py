@@ -52,17 +52,17 @@ class EEObject( PObject ):
     def __init__( self, value, *args, **kwargs ):
         """!
         @brief Constructor.  Can be called as
-        \code
+        @code
             EEObject( <valueString>[, series=<series>] )
-        \endcode
+        @endcode
         or
-        \code
+        @code
             EEObject( <value>, <unit>[, series=<series>] )
-        \endcode
+        @endcode
         or
-        \code
+        @code
             EEObject( <objet>[, series=<series>] )
-        \endcode
+        @endcode
         where valueString can be any valstr consisting of a value and an SI
         unit, and the object can be any PObject-derived object.  <value> and
         <unit> are self explanatory, and <series> can be a valstr specifying an
@@ -73,7 +73,7 @@ class EEObject( PObject ):
         of output to strict ASCII characters only.
         @param value valstr with value and unit or float with value or PObject
                      with unit "Ω"
-        @param args unit if value was float
+        @param args unit if value was int, float, or complex
         @param kwargs series=<series> (default: "E12"),
                       digits=<digits> (default: 3),
                       strictAscii=<bool> (default: False)
@@ -81,9 +81,13 @@ class EEObject( PObject ):
         try:
             self.__series = kwargs["series"]
         except KeyError:
-            kwargs["series"] = "E12"
-            self.__series = kwargs["series"]
-        if str == type( value ):
+            self.__series = "E12"
+        try:
+            _ = kwargs["digits"]
+        except KeyError:
+            kwargs["digits"] = 3
+            
+        if isinstance( value, str ):
             if len( args ) != 0:
                 raise ValueError( "Too many arguments" )
             value, unit = SI.Prefix.fromString( value )
@@ -92,10 +96,10 @@ class EEObject( PObject ):
             unit = value.unit
             value = value.value
             args = unit,
-        elif len( args ) < 1:
-            raise ValueError( "Unit argument missing" )
-        kwargs["digits"] = 3
-        super().__init__( ESeries.closest( value, self.series ),
+        elif isinstance( value, (int, float, complex) ):
+            if len( args ) < 1:
+                raise ValueError( "Unit argument missing" )
+        super().__init__( ESeries.closest( value, self.__series ),
                           *args,
                           **kwargs )
         return
@@ -169,7 +173,7 @@ class Voltage( PObject ):
         except KeyError:
             kwargs["digits"] = 3
 
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
         else:
             if str == type( value ):
@@ -207,7 +211,7 @@ class Current( PObject ):
         except KeyError:
             kwargs["digits"] = 3
 
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
         else:
             if str == type( value ):
@@ -241,6 +245,10 @@ class Resistor( EEObject ):
                       digits=<digits> (default: 3),
                       strictAscii=<bool> (default: False)
         """
+        try:
+            _ = kwargs["digits"]
+        except KeyError:
+            kwargs["digits"] = 3
         try:
             series = kwargs["series"]
         except KeyError:
@@ -287,6 +295,14 @@ class Capacitor( EEObject ):
                     digits=<digits> (default: 3),
                     strictAscii=<bool> (default: False)
         """
+        try:
+            _ = kwargs["digits"]
+        except KeyError:
+            kwargs["digits"] = 3
+        try:
+            series = kwargs["series"]
+        except KeyError:
+            series = None
 
         if isinstance( value, PObject ):
             if isinstance( value, EEObject ):
@@ -299,7 +315,7 @@ class Capacitor( EEObject ):
             super().__init__( value, *args, **kwargs )
         else:
             if series is None:
-                kwargs["series"] = "E12"
+                kwargs["series"] = "E6"
             if str == type( value ):
                 value, unit = SI.Prefix.fromString( value )
             elif len( args ) > 0:
@@ -316,9 +332,9 @@ class Capacitor( EEObject ):
 class Inductor( EEObject ):
     """!
     @brief Convenience class for EEObject initialized as inductor.  Since it is
-    derived from EEObject and not PObject, objects will be confined to a series
-    that must be supplied when initializing it - there is no default series for
-    inductors.  To create an inductor object with values not bound to a
+    derived from EEObject and not PObject, objects are usually confined to a 
+    series that was supplied when initializing it - there is no default series 
+    for inductors.  To create an inductor object with values not bound to a
     particular series, use a PObject with unit "H".
     """
 

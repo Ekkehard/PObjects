@@ -73,8 +73,9 @@
 
 import math
 import copy
+import scipy
 
-from PObjects import SI, Const
+from PObjects import SI
 
 
 def sqrt( value ):
@@ -225,7 +226,7 @@ class PObject():
     which is always a floating point number.  Also, calculating inherent
     uncertainties internally is beyond the scope of this class.
     """
-
+        
     @staticmethod
     def valueList( polist ):
         """!
@@ -286,6 +287,7 @@ class PObject():
         standardized units if they have the same SI base unit.  If not all
         elements of the list have the same SI unit or are not PObjects, a
         ValueError exception is raised.
+        @param polist list with PObject-derived objects
         @return tuple with list of float values and unit for all of them
         """
         minobj = min( polist )
@@ -297,7 +299,7 @@ class PObject():
 
         for element in polist:
             if element != 0:
-                if not issubclass( type( element ), PObject ):
+                if not isinstance( element, PObject ):
                     raise ValueError( "elements in list need to be PObjects" )
                 if element.unit != minobj.unit:
                     raise ValueError( "all elements in list must have same "
@@ -359,7 +361,7 @@ class PObject():
         @param kwargs can consist of digits=<digits> and/or strictAscii=<bool>
         """
 
-        if str == type( value ):
+        if isinstance( value, str ):
             # called with value-and-unit string
             vlist = value.split( " " )
             if len( vlist ) <= 2:
@@ -373,7 +375,7 @@ class PObject():
                 unit = " ".join( vlist[1:] )
             self.__args = args
             self.__kwargs = kwargs
-        elif issubclass( type( value ), PObject ):
+        elif isinstance( value, PObject ):
             # called with another PObject-derived object
             # value and unit are simply derived from it
             self.__value = value.value
@@ -390,38 +392,55 @@ class PObject():
                 self.__kwargs["strictAscii"] = kwargs["strictAscii"]
             except KeyError:
                 pass
-        else:
-            # called with arbitrary value, requires unit in args tuple or
-            # results in unitless PObject
+            try:
+                self.__kwargs["precision"] = kwargs["precision"]
+            except KeyError:
+                pass
+        elif isinstance( value, (int, float, complex) ):
+            # called with numerical value only, requires unit in args tuple or
+            # results in unitless PObject if nothing is given
             if len( args ) < 1:
                 self.__value = value
                 unit = ""
             elif str == type( args[0] ):
                 if len( args[0].split( " " ) ) == 1:
-                    # unit is not composite and can have prefix
+                    # unit is not composite string and can have prefix
                     (self.__value, unit) = SI.Prefix.fromString( str( value )
                                                                  + " "
                                                                  + args[0] )
                 else:
-                    # unit is composite and can not have prefixes
+                    # unit is composite string and can not have prefixes
                     self.__value = value
                     unit = args[0]
-            else:
-                # unit is not string (likely of type SI.Unit - we check later)
+            elif SI.Unit == type( args[0] ):
+                # first argument is proper SI Unit
                 self.__value = value
                 unit = args[0]
+            else:
+                raise ValueError( "PObject not called with proper unit - "
+                                  "value = {0}, args[0] = {1}"
+                                  .format( value, args[0] ) )
 
             if len( args ) > 1:
                 self.__args = args[1:]
             else:
                 self.__args = ()
             self.__kwargs = kwargs
+        else:
+            raise ValueError( "value argument is of type {0} "
+                              "but must be string, number or PObject"
+                              .format( type( value ) ) )
 
         try:
             self.__digits = self.__kwargs["digits"]
         except KeyError:
             self.__digits = 6
             self.__kwargs["digits"] = self.digits
+        try:
+            self.__precision = self.__kwargs["precision"]
+        except KeyError:
+            self.__precision = 0
+            self.__kwargs["precision"] = self.precision
 
         try:
             self.__strictAscii = self.__kwargs["strictAscii"]
@@ -434,7 +453,8 @@ class PObject():
         elif SI.Unit == type( unit ):
             self.__unit = unit
         else:
-            raise ValueError( "unit must be string or SI.Unit object" )
+            raise ValueError( "unit {0} must be string or SI.Unit object "
+                              "but is {1}".format( unit, type( unit ) ) )
 
         return
 
@@ -448,7 +468,7 @@ class PObject():
            1 == len( str( self.__unit ).split( " " )) and \
            -1 == str( self.__unit ).find( "**" ):
             return SI.Prefix.toString( (self.__value, str( self.__unit )),
-                                       precision=self.__digits,
+                                       digits=self.__digits,
                                        strictAscii=self.__strictAscii )
         fstring = "{{0:.{0}g}} {{1}}".format( self.__digits )
         return fstring.format( self.__value, self.__unit )
@@ -499,7 +519,7 @@ class PObject():
         @return Object of same class with result
         """
         kwargs = self._kwargs
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 resval = self.__value + other
             else:
@@ -533,7 +553,7 @@ class PObject():
         @param other other object to add to ourselves
         @return self now containing result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 self.__value += other
             else:
@@ -557,7 +577,7 @@ class PObject():
         @return Object of same class with result
         """
         kwargs = self.__kwargs
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 resval = self.__value - other
             else:
@@ -583,7 +603,7 @@ class PObject():
         @return Object of same class with result
         """
         kwargs = self.__kwargs
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 resval = other - self.__value
             else:
@@ -608,7 +628,7 @@ class PObject():
         @param other other object to subtract from ourselves
         @return self now containing result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 self.__value -= other
             else:
@@ -635,7 +655,7 @@ class PObject():
         @param other other object to multiply ourselves with
         @return Object of same class or PObject with result
         """
-        if issubclass( type( other ), PObject ):
+        if isinstance( other, PObject ):
             kwargs = self.__kwargs
             kwargs["digits"] = max( self.__digits, other.digits )
             res = PObject( self.__value * other.value,
@@ -660,7 +680,7 @@ class PObject():
         @param other other object to multiply ourselves with
         @return self or PObject with result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             self.__value *= other
             res = self
         else:
@@ -679,7 +699,7 @@ class PObject():
         @param other other object to multiply ourselves with
         @return PObject or derived objects with result
         """
-        if issubclass( type( other ), PObject ):
+        if isinstance( other, PObject ):
             raise ValueError( "We did not expect to get here" )
         res = self.__class__( other * self.__value, self.__unit,
                                 *self.__args, **self.__kwargs )
@@ -695,7 +715,7 @@ class PObject():
         @param other other object to divide ourselves by
         @return Object of same class or PObject with result
         """
-        if issubclass( type( other ), PObject ):
+        if isinstance( other, PObject ):
             kwargs = self.__kwargs
             kwargs["digits"] = max( self.__digits, other.digits )
             res = PObject( self.__value / other.value,
@@ -716,7 +736,7 @@ class PObject():
         @param other other object to divide ourselves by
         @return self or PObject with result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             self.__value /= other
             res = self
         else:
@@ -735,7 +755,7 @@ class PObject():
         @param other other object to divide by ourselves
         @return PObject with result
         """
-        if issubclass( type( other ), PObject ):
+        if isinstance( other, PObject ):
             raise ValueError( "We did not expect to get here" )
 
         res = PObject( other / self.__value,
@@ -756,7 +776,7 @@ class PObject():
         if other == 0:
             return 1
 
-        if issubclass( type( other ), PObject ):
+        if isinstance( other, PObject ):
             if other.isUnitless:
                 other = other.value
             else:
@@ -802,7 +822,7 @@ class PObject():
         @brief Overload < operator (self < other)
         @param other other object to compare ourselves to
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if not (self.isUnitless or other == 0):
                 raise ValueError( "can only compare like objects" )
             return self.__value < other
@@ -817,7 +837,7 @@ class PObject():
         @param other other object to compare ourselves to
         @return boolean value as result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if not (self.isUnitless or other == 0):
                 raise ValueError( "can only compare like objects" )
             return self.__value <= other
@@ -832,7 +852,7 @@ class PObject():
         @param other other object to compare ourselves to
         @return boolean value as result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if not (self.isUnitless or other == 0):
                 raise ValueError( "can only compare like objects" )
             return self.__value > other
@@ -847,7 +867,7 @@ class PObject():
         @param other other object to compare ourselves to
         @return boolean value as result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if not (self.isUnitless or other == 0):
                 raise ValueError( "can only compare like objects" )
             return self.__value >= other
@@ -862,7 +882,7 @@ class PObject():
         @param other other object to compare ourselves to
         @return boolean value as result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if not (self.isUnitless or other == 0):
                 return False
             return self.__value == other
@@ -875,7 +895,7 @@ class PObject():
         @param other other object to compare ourselves to
         @return boolean value as result
         """
-        if not issubclass( type( other ), PObject ):
+        if not isinstance( other, PObject ):
             if not (self.isUnitless or other == 0):
                 return True
             return self.value != other
@@ -948,6 +968,14 @@ class PObject():
 
 
     @property
+    def precision( self ):
+        """!
+        @brief Obtain the precision of a PObject (mostly for Constants).
+        """
+        return self.__precision
+
+
+    @property
     def _strictAscii( self ):
         """!
         @brief Obtain the strictAscii property of a PObject.
@@ -983,7 +1011,12 @@ class Energy( PObject ):
     in the (mksA) SI system, i.e. in this case a PObject with "J" as unit.
     """
 
+
+    # Avoid circular dependencies - define physical constants here so as not to
+    # include Const
+    __e_0 = scipy.constants.physical_constants['elementary charge'][0]
     __calConv = 4.1858
+    __ergConv = 1.0e-07
 
     def __init__( self, value, *args, **kwargs ):
         """!
@@ -1020,14 +1053,14 @@ class Energy( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             if value.unit != "J":
-                raise ValueError( "Temperature can only be initialized with "
+                raise ValueError( "Energy can only be initialized with "
                                   "a string, a value unit pair or a PObject "
                                   "with unit J" )
             super().__init__( value, *args, **kwargs )
             return
-        if str == type( value ):
+        if isinstance( value, str ):
             value, unit = SI.Prefix.fromString( value )
         elif len( args ) > 0:
             unit = args[0]
@@ -1037,11 +1070,11 @@ class Energy( PObject ):
 
         # convert to J as needed
         if "eV" == unit:
-            value *= Const.e_0.value
+            value *= Energy.__e_0
         elif "cal" == unit:
             value *= Energy.__calConv
         elif "erg" == unit:
-            value *= 1.e-07
+            value *= Energu.__ergConv
         elif "J" != unit:
             raise ValueError( "Wrong energy unit specified: " + unit )
 
@@ -1061,7 +1094,7 @@ class Energy( PObject ):
         @return string containing string representation of value and unit
         """
         if "eV" == self.__printUnit:
-            return SI.Prefix.toString( (self.value / Const.e_0.value, "eV"),
+            return SI.Prefix.toString( (self.value / Energy.__e_0, "eV"),
                                        self.digits,
                                        strictAscii=self._strictAscii  )
         if "cal" == self.__printUnit:
@@ -1162,14 +1195,14 @@ class Temperature( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             if value.unit != "K":
                 raise ValueError( "Temperature can only be initialized with "
                                   "a string, a value unit pair, or an object "
                                   "inheriting from PObject with unit K" )
             super().__init__( value, *args, **kwargs )
             return
-        if str == type( value ):
+        if isinstance( value, str ):
             try:
                 value, unit = SI.Prefix.fromString( value )
             except ValueError as e:
@@ -1312,10 +1345,10 @@ class Time( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
         else:
-            if str == type( value ):
+            if isinstance( value, str ):
                 value, unit = SI.Prefix.fromString( value )
             elif len( args ) > 0:
                 unit = str( args[0] )
@@ -1389,11 +1422,11 @@ class Frequency( PObject ):
                     instance of Unit (see SI.Unit)
         @param kwargs can consist of digits=<digits> and/or strictAscii=<bool>
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
             return
         else:
-            if str == type( value ):
+            if isinstance( value, str ):
                 value, unit = SI.Prefix.fromString( value )
             elif len( args ) > 0:
                 unit = args[0]
@@ -1446,10 +1479,10 @@ class Mass( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
         else:
-            if str == type( value ):
+            if isinstance( value, str ):
                 value, unit = SI.Prefix.fromString( value )
             elif len( args ) > 0:
                 unit = args[0]
@@ -1503,10 +1536,10 @@ class Length( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
         else:
-            if str == type( value ):
+            if isinstance( value, str ):
                 value, unit = SI.Prefix.fromString( value )
             elif len( args ) > 0:
                 unit = args[0]
@@ -1610,7 +1643,7 @@ class ImperialLengthMisfits( PObject ):
         @param kwargs can consist of precision=<precision> and
                       useYards=<bool> - both are optional
         """
-        if issubclass( type( value ), PObject ):
+        if isinstance( value, PObject ):
             if value.unit != "m":
                 raise ValueError( "ImperialLengthMisfits can only be "
                                   "initialized with a string, a value unit "
@@ -1618,7 +1651,7 @@ class ImperialLengthMisfits( PObject ):
                                   "PObject with unit m" )
             super().__init__( value, *args, **kwargs )
             return
-        if str == type( value ):
+        if isinstance( value, str ):
             valstr = value
             if valstr.find( "'" ) != -1 and valstr.find( " '" ) == -1:
                 valstr = valstr.replace( "'", " '" )
@@ -1817,7 +1850,7 @@ if "__main__" == __name__:
 
     import sys
     import os.path
-    sys.path.append( os.join( os.path.dirname( __file__ ), os.pardir ) )
+    sys.path.append( os.path.join( os.path.dirname( __file__ ), os.pardir ) )
     from common import enableUnicodeOutput, idTupleFromFile, printCopyright, \
                        ReturnCodes
 

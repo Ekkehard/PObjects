@@ -3,7 +3,7 @@
 ##
 # @file       EEIterators.py
 #
-# @version    2.0.0
+# @version    2.0.1
 #
 # @par Purpose
 #             EEIterators module of Electrical Engineering Toolbox for
@@ -17,7 +17,7 @@
 
 # Known Bugs: none
 #
-# @author     Ekkehard Blanz <Ekkehard.Blanz@gmail.com> (C) 2022-2024
+# @author     Ekkehard Blanz <Ekkehard.Blanz@gmail.com> (C) 2022-2025
 #
 # @copyright  See COPYING file that comes with this distribution
 #
@@ -27,6 +27,7 @@
 #  -----------------+----------------+------------------------------------------
 #   Thu Apr 14 2022 | Ekkehard Blanz | extracted from ElectricalEngineering.py
 #   Tue Dec 17 2024 | Ekkehard Blanz | moved to PObjects
+#   Tue Jun 17 2025 | Ekkehard Blanz | fixed bug in calling Erange
 #                   |                |
 
 import math
@@ -166,7 +167,7 @@ class Erange():
             self.__args = args[1:]
         self.__args = args
         try:
-            dummy = kwargs["series"]
+            _ = kwargs["series"]
         except KeyError:
             kwargs["series"] = "E12"
         self.__kwargs = kwargs
@@ -202,7 +203,7 @@ class Rrange( Erange ):
         """
         if series is None:
             series = ESeries.bestOf( start.series, end.series )
-        super().__init__( start, end, Resistor, "Ω", series=series )
+        super().__init__( start, end, "Ω", series=series )
         return
 
 
@@ -226,7 +227,7 @@ class Crange( Erange ):
         """
         if series is None:
             series = ESeries.bestOf( start.series, end.series )
-        super().__init__( start, end, Capacitor, "F", series=series )
+        super().__init__( start, end, "F", series=series )
         return
 
 
@@ -250,5 +251,5 @@ class Lrange( Erange ):
         """
         if series is None:
             series = ESeries.bestOf( start.series, end.series )
-        super().__init__( start, end, Inductor, "H", series=series )
+        super().__init__( start, end, "H", series=series )
         return

@@ -149,11 +149,10 @@ class Unit():
                               "as arguments" )
 
         self.__strictAscii = strictAscii
+        unit = unit.replace( "^", "**" )
 
         if tuple == type( unit ):
-            num, den = unit
-            self.__numerator = num // math.gcd( num, den )
-            self.__denominator = den // math.gcd( num, den )
+            self.__numerator, self.__denominator = unit
         else:
             if "Ohm" == unit: unit = "Ω"
             if unit.count( "/" ) > 1:
@@ -168,6 +167,9 @@ class Unit():
                 if "/" == token:
                     numerator = False
                     continue
+                if token.count( "**-" ) > 0:
+                    numerator = False
+                    token = token.replace( "**-", "**" )
                 pos = token.find( "**" )
                 if -1 == pos:
                     power = 1
@@ -188,6 +190,11 @@ class Unit():
                         found = True
                 if not found:
                     raise ValueError( "Unknown unit name specified: " + token )
+        
+        divisor = math.gcd( self.__numerator, self.__denominator )
+        self.__numerator //= divisor
+        self.__denominator //= divisor
+        
         return
 
 
@@ -224,7 +231,6 @@ class Unit():
         return retstr
 
 
-
     def __repr__( self ):
         """!
         @brief Return technical representation of the object.
@@ -233,8 +239,7 @@ class Unit():
         return "Unit( (" + str( self.__numerator ) + ", " + \
                            str( self.__denominator ) + ") )"
 
-
-
+           
     def __components( self, n ):
         """!
         @brief Private method to obtain components of a composite "unit."
@@ -446,23 +451,27 @@ class Prefix():
     return value from fromString(), is still always in kg.
 
     This class uses the following prefixes:
-     - y (yocto) for e-24
-     - z (zepto) for e-21
-     - a (atto)  for e-18
-     - f (femto) for e-15
-     - p (pico)  for e-12
-     - n (nano)  for e-09
-     - μ (micro) for e-06 (u as input and as output if strictAscii was set True)
-     - m (milli) for e-03
-     - c (centi) for e-02 (only used if the unit is m)
-     - k (kilo)  for e+03
-     - M (Mega)  for e+06
-     - G (Giga)  for e+09
-     - T (Tera)  for e+12
-     - P (Peta)  for e+15
-     - E (Exa)   for e+18
-     - Z (Zetta) for e+21
-     - Y (Yotta) for e+24
+     - q (quecto) for e-30
+     - r (ronto)  for e-27
+     - y (yocto)  for e-24
+     - z (zepto)  for e-21
+     - a (atto)   for e-18
+     - f (femto)  for e-15
+     - p (pico)   for e-12
+     - n (nano)   for e-09
+     - μ (micro)  for e-06 (u as input and output if strictAscii was set True)
+     - m (milli)  for e-03
+     - c (centi)  for e-02 (only used if the unit is m)
+     - k (kilo)   for e+03
+     - M (Mega)   for e+06
+     - G (Giga)   for e+09
+     - T (Tera)   for e+12
+     - P (Peta)   for e+15
+     - E (Exa)    for e+18
+     - Z (Zetta)  for e+21
+     - Y (Yotta)  for e+24
+     - R (Ronna)  for e+27
+     - Q (Quetta) for e+30
 
     There is the prefix μ that may not render correctly in cases where only
     strict ASCII characters are allowed.  All methods of the Prefix class
@@ -477,14 +486,14 @@ class Prefix():
 
 
     @staticmethod
-    def toString( valueTuple, precision=3, formatSpec=None, strictAscii=False ):
+    def toString( valueTuple, digits=3, formatSpec=None, strictAscii=False ):
         """!
         @brief Convert a number and base unit to an SI-prefix formatted string.
         @param valueTuple with number to be formatted and its SI base unit
-        @param precision total number of digits to print (if set to None, all
+        @param digits total number of digits to print (if set to None, all
         relevant digits are printed - defaults to 3)
         @param formatSpec Python format spec, if not None (default),
-        precision will be ignored
+        digits will be ignored
         @param strictAscii if set to True, only strict ASCII characters are
         returned
         @return formatted string containing number and unit with SI prefix
@@ -499,12 +508,12 @@ class Prefix():
         if formatSpec:
             return format( newval, formatSpec ) + " " + unit
         else:
-            if precision is not None and newval != 0:
+            if digits is not None and newval != 0:
                 # difference to next integer
                 delta = abs( round( newval ) - newval )
                 predigits = max( 0,
                                  math.floor( math.log10( abs( newval ) ) ) + 1 )
-                postdigits = max( 0, precision - predigits )
+                postdigits = max( 0, digits - predigits )
 
                 if abs( newval ) > 1 and delta <= 5 * 10**(-postdigits - 1):
                     # we've got something close enough to an integer
@@ -563,9 +572,10 @@ class Prefix():
         @param strictAscii set True to get only 8-bit ASCII characters
         @return (value, baseUnit) tuple where baseUnit is an SI base unit
         """
-        prefixes = {"y":-24, "z":-21, "a":-18, "f":-15, "p":-12, "n":-9, "u":-6,
-                    "μ":-6, "m":-3, "c":-2, "":0, "k":3, "M":6, "G":9, "T":12,
-                    "P":15, "E":18, "Z":21, "Y":24}
+        prefixes = {"q":-30, "r":-27, "y":-24, "z":-21, "a":-18, "f":-15,
+                    "p":-12, "n":-9, "u":-6, "μ":-6, "m":-3, "c":-2, "":0,
+                    "k":3, "M":6, "G":9, "T":12, "P":15, "E":18, "Z":21, "Y":24,
+                    "R":27, "Q":30}
 
         (value, unit) = valueTuple
 
@@ -586,7 +596,13 @@ class Prefix():
         else:
             baseUnit = unit
             prefix = ""
-
+        
+        if prefix == "m" and not baseUnit[0].isalpha():
+            # unfortunately, "m" can be a unit OR a prefix
+            # here it was a unit - not a prefix
+            baseUnit = prefix + baseUnit
+            prefix = ""
+            
         try:
             power = prefixes[prefix]
         except KeyError:
@@ -637,13 +653,15 @@ class Prefix():
         """
 
         if strictAscii:
-            prefixes = {-24:"y", -21:"z", -18:"a", -15:"f", -12:"p", -9:"n",
-                        -6:"u", -3:"m", -2:"c", 0:"", 3:"k", 6:"M", 9:"G",
-                        12:"T", 15:"P", 18:"E", 21:"Z", 24:"Y"}
+            prefixes = {-30:"q", -27:"r", -24:"y", -21:"z", -18:"a", -15:"f",
+                        -12:"p", -9:"n", -6:"u", -3:"m", -2:"c", 0:"", 3:"k",
+                        6:"M", 9:"G", 12:"T", 15:"P", 18:"E", 21:"Z", 24:"Y",
+                        27:"R", 30:"Q"}
         else:
-            prefixes = {-24:"y", -21:"z", -18:"a", -15:"f", -12:"p", -9:"n",
-                        -6:"μ", -3:"m", -2:"c", 0:"", 3:"k", 6:"M", 9:"G",
-                        12:"T", 15:"P", 18:"E", 21:"Z", 24:"Y"}
+            prefixes = {-30:"q", -27:"r", -24:"y", -21:"z", -18:"a", -15:"f",
+                        -12:"p", -9:"n", -6:"μ", -3:"m", -2:"c", 0:"", 3:"k",
+                        6:"M", 9:"G", 12:"T", 15:"P", 18:"E", 21:"Z", 24:"Y",
+                        27:"R", 30:"Q"}
 
         (number, baseUnit) = Prefix.normalizeTuple( valueTuple, strictAscii )
 
