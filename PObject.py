@@ -1,4 +1,4 @@
- Python Implementation: PObject
+# Python Implementation: PObject
 ##
 # @file       PObject.py
 #
@@ -127,6 +127,8 @@ class PObject():
         print( f )
     @endcode
     which would produce the string "1.03821 MHz".
+    
+    The built-in functions min() and max() will also work on arrays of PObjects.
 
     PObjects can be converted to strings and then yield human-readable results
     with engineering notation and standard SI prefixes as shown above. Again
@@ -143,11 +145,12 @@ class PObject():
     interest in electrical engineering.
 
     It is possible to instantiate a PObject without a unit or a "blank" unit
-    string; doing so is discouraged, but any value resulting from an arithmetic
-    operation resulting in a unitless PObject will automatically be converted
-    into a regular number (or a complex number if the value was complex and
-    the unit string blank).  Only other unitless PObjects or regular numbers
-    can be added to or subtracted from unitless PObjects.
+    string; doing so is discouraged, but, following the philosophy that simpler 
+    is better, any value resulting from an arithmetic operation resulting in a
+    unitless PObject will automatically be converted into a regular number (or a
+    complex number if the value was complex and the unit string blank).  Only
+    other unitless PObjects or regular numbers can be added to or subtracted 
+    from unitless PObjects.
 
     At the expense of sounding like a general Python tutorial, it is worth
     noting that PObjects are mutable objects - not immutable ones such as
@@ -1312,7 +1315,7 @@ class Time( PObject ):
     @brief Convenience class to represent a time PObject.
 
     Other than a PObject with unit "s", this class returns its value in seconds, 
-    minutes, hours, days, and years.  The internal represenation is of cours in
+    minutes, hours, days, and years.  The internal represention is of course in
     seconds only.
     """
 
