@@ -54,10 +54,22 @@
 #   Wed Apr 13 2022 | Ekkehard Blanz | made Part of the Physics package
 #   Mon Jul 18 2022 | Ekkehard Blanz | added formatSpec parameter to
 #                   |                | Prefix.toString()
+#   Wed Oct 14 2026 | Ekkehard Blanz | fixed negative and fractional powers of
+#                   |                | Unit, per-token exponents in unit
+#                   |                | strings, prefix detection (Pa, mol^-1,
+#                   |                | mm**2), prefix choice after rounding,
+#                   |                | inf/nan, mass prefix range, and
+#                   |                | strictAscii in Unit.__str__(); added
+#                   |                | Prefix.convertToSI() for SI prefixes in
+#                   |                | all tokens of composite units and the
+#                   |                | non-SI units eV, u, and E_h
 #                   |                |
 
 
 import math
+import numbers
+from fractions import Fraction
+import scipy.constants
 
 
 class Unit():
@@ -155,43 +167,56 @@ class Unit():
         else:
             # support scipy's way of indicating exponents
             unit = unit.replace( "^", "**" )
-            if "Ohm" == unit: unit = "Ω"
             if unit.count( "/" ) > 1:
                 raise ValueError( "Can only use one '/' - use parentheses "
                                   "for numerator and denominator" )
-            unit = unit.replace( "(", "" ).replace( ")", "" )
+            unit = unit.replace( "(", " " ).replace( ")", " " )
+            unit = unit.replace( "/", " / " )
             self.__numerator = 1
             self.__denominator = 1
             numerator = True
-            for token in unit.split( " " ):
+            for token in unit.split():
                 if "1" == token: continue
                 if "/" == token:
                     numerator = False
                     continue
-                if token.count( "**-" ) > 0:
-                    numerator = False
-                    token = token.replace( "**-", "**" )
                 pos = token.find( "**" )
                 if -1 == pos:
                     power = 1
                 else:
-                    power = int( token[pos+2:] )
+                    try:
+                        power = int( token[pos+2:] )
+                    except ValueError as e:
+                        raise ValueError( "Only integer exponents are "
+                                          "allowed in unit strings: " +
+                                          token ) from e
                     token = token[:pos]
+                    if not token:
+                        raise ValueError( "Exponents can only be applied to "
+                                          "unit symbols, not to parenthesized "
+                                          "groups" )
+                if token in ("Ohm", "ohm"):
+                    token = "Ω"
+                # a negative exponent only affects its own token, and a
+                # token after "/" goes into the denominator
+                if not numerator:
+                    power = -power
 
                 found = False
                 for (tup, name) in Unit.__namesDict.items():
                     if name == token:
                         num, den = tup
-                        if numerator:
+                        if power >= 0:
                             self.__numerator *= num**power
                             self.__denominator *= den**power
                         else:
-                            self.__numerator *= den**power
-                            self.__denominator *= num**power
+                            self.__numerator *= den**(-power)
+                            self.__denominator *= num**(-power)
                         found = True
+                        break
                 if not found:
                     raise ValueError( "Unknown unit name specified: " + token )
-        
+
         divisor = math.gcd( self.__numerator, self.__denominator )
         self.__numerator //= divisor
         self.__denominator //= divisor
@@ -207,7 +232,9 @@ class Unit():
         """
         if 1 == self.__numerator and 1 == self.__denominator: return ""
         try:
-            return Unit.__namesDict[(self.__numerator, self.__denominator)]
+            retstrNum = Unit.__namesDict[(self.__numerator,
+                                          self.__denominator)]
+            retstrDen = ""
         except KeyError:
             try:
                 retstrNum = "1"
@@ -321,7 +348,7 @@ class Unit():
             raise ValueError( "can only multiply SI.Units with each other" )
         num = self.__numerator * other._numerator
         den = self.__denominator * other._denominator
-        return Unit( (num, den) )
+        return Unit( (num, den), self.__strictAscii )
 
 
 
@@ -335,7 +362,7 @@ class Unit():
             raise ValueError( "can only divide SI.Units by each other" )
         num = self.__numerator * other._denominator
         den = self.__denominator * other._numerator
-        return Unit( (num, den) )
+        return Unit( (num, den), self.__strictAscii )
 
 
 
@@ -353,7 +380,7 @@ class Unit():
         else:
             den = self.__numerator * other._denominator
             num = self.__denominator * other._numerator
-        return Unit( (num, den) )
+        return Unit( (num, den), self.__strictAscii )
 
 
 
@@ -361,75 +388,93 @@ class Unit():
         """!
         @brief Raise unit to the power-th power.
 
-        If power is any integer, the method will succeed.  If power is +/- 0.5,
-        the method may succeed; in all other cases the method will likely not
-        succeed as it will probably not result in a quotient of SI base units.
-        If that cannot be achieved, a ValueError will be raised.
+        If power is any integer, the method will succeed.  If power is a
+        fraction a / b (e.g. 0.5 or 1/3), the method succeeds if the result
+        is again a quotient of SI base units, i.e. if numerator and denominator
+        of the unit are perfect b-th powers; otherwise a ValueError is raised.
         @param power power unit should be raised to
         @return SI.Unit object with raised to the power-th power
         """
         if 1 == self.__numerator and 1 == self.__denominator: return self
 
-        if power >= 1 and int( power ) == power:
-            num = self.__numerator**int( power )
-            den = self.__denominator**int( power )
-        elif power <= -1 and int( power ) == power:
-            den = self.__numerator**int( power )
-            num = self.__denominator**int( power )
-        elif power == 0:
-            return (1, 1)
-        elif power > 0:
-            num = self.__numerator**power
-            den = self.__denominator**power
-            if int( num ) != num or int( den ) != den:
-                if power == 0.5:
-                    raise ValueError( "Cannot compute square root of "
-                                      "unit {0}".format( self ) )
-                raise ValueError( "Cannot compute {0}-th power of "
-                                  "unit {1}".format( power, self ) )
-        elif power < 0:
-            den = self.__numerator**(-power)
-            num = self.__denominator**(-power)
-            if int( num ) != num or int( den ) != den:
-                raise ValueError( "Cannot compute {0}-th power of "
-                                  "unit {1}".format( power, self ) )
+        if 0 == power:
+            return Unit( (1, 1), self.__strictAscii )
 
-        return Unit( (int( num ), int( den )) )
+        frac = Fraction( power ).limit_denominator( 1000 )
+        if abs( float( frac ) - power ) > 1e-12:
+            raise ValueError( "Cannot compute {0}-th power of "
+                              "unit {1}".format( power, self ) )
+        num = self.__root( self.__numerator, frac.denominator, power )
+        den = self.__root( self.__denominator, frac.denominator, power )
+        exponent = abs( frac.numerator )
+        if frac.numerator > 0:
+            return Unit( (num**exponent, den**exponent), self.__strictAscii )
+        return Unit( (den**exponent, num**exponent), self.__strictAscii )
+
+
+
+    def __root( self, n, root, power ):
+        """!
+        @brief Private method to compute the exact integer root-th root of n.
+        @param n integer of which the root is to be taken
+        @param root integer degree of root
+        @param power original power (for error message only)
+        @return integer r with r**root == n
+        """
+        if 1 == root:
+            return n
+        r = round( n**(1. / root) )
+        for candidate in (r - 1, r, r + 1):
+            if candidate > 0 and candidate**root == n:
+                return candidate
+        if 0.5 == power:
+            raise ValueError( "Cannot compute square root of "
+                              "unit {0}".format( self ) )
+        raise ValueError( "Cannot compute {0}-th power of "
+                          "unit {1}".format( power, self ) )
 
 
 
     def __eq__( self, other ):
         """!
         @brief Overloading equality check.
-        @param other other SI.Unit object to be checked against
+
+        A string is converted into a Unit before comparison; a string that does
+        not represent a valid unit compares unequal.
+        @param other other SI.Unit object or unit string to be checked against
         @return True or False
         """
-        if isinstance( other, Unit ):
-            pass
-        elif str == type( other ):
-            other = Unit( other )
-        else:
-            raise ValueError( "can only compare Unit with other Unit" )
+        if isinstance( other, str ):
+            try:
+                other = Unit( other )
+            except ValueError:
+                return False
+        elif not isinstance( other, Unit ):
+            return NotImplemented
         return self.__numerator == other._numerator and \
                self.__denominator == other._denominator
-
 
 
 
     def __ne__( self, other ):
         """!
         @brief Overloading inequality check.
-        @param other other SI.Unit object to be checked against
+        @param other other SI.Unit object or unit string to be checked against
         @return True or False
         """
-        if isinstance( other, Unit ):
-            pass
-        elif str == type( other ):
-            other = Unit( other )
-        else:
-            raise ValueError( "can only compare Unit with other Unit" )
-        return self.__numerator != other._numerator or \
-               self.__denominator != other._denominator
+        result = self.__eq__( other )
+        if result is NotImplemented:
+            return result
+        return not result
+
+
+
+    def __hash__( self ):
+        """!
+        @brief Units are never changed after construction and can therefore be
+               hashed (e.g. used as dictionary keys).
+        """
+        return hash( (self.__numerator, self.__denominator) )
 
 
 
@@ -485,6 +530,25 @@ class Prefix():
     instantiated.
     """
 
+    __prefixes = {"q":-30, "r":-27, "y":-24, "z":-21, "a":-18, "f":-15,
+                  "p":-12, "n":-9, "u":-6, "μ":-6, "m":-3, "c":-2, "":0,
+                  "k":3, "M":6, "G":9, "T":12, "P":15, "E":18, "Z":21, "Y":24,
+                  "R":27, "Q":30}
+
+    # accepted non-SI units: symbol -> (conversion factor, SI unit)
+    __nonSI = {
+        # electron volt (exact by definition of the SI since 2019)
+        "eV": (scipy.constants.e, "J"),
+        # atomic mass unit (Dalton)
+        "u": (scipy.constants.physical_constants["atomic mass constant"][0],
+              "kg"),
+        # Hartree energy
+        "E_h": (scipy.constants.physical_constants["Hartree energy"][0], "J"),
+        # gram and tonne
+        "g": (1.e-3, "kg"),
+        "t": (1.e+3, "kg")
+        }
+
 
     @staticmethod
     def toString( valueTuple, digits=3, formatSpec=None, strictAscii=False ):
@@ -504,31 +568,43 @@ class Prefix():
             raise ValueError( "toString() requires (value, unit) tuple "
                               "as argument" )
 
-        (newval, unit) = Prefix.standardizeTuple( valueTuple, strictAscii )
+        def join( numstr, unit ):
+            # no trailing blank for unitless values
+            return numstr + " " + unit if unit else numstr
+
+        (value, unit) = valueTuple
+        if not formatSpec and digits is not None and \
+           isinstance( value, numbers.Real ) and math.isfinite( value ) and \
+           0 != value:
+            # round to the requested number of significant digits BEFORE
+            # choosing the prefix so that e.g. 999.7 m with 3 digits becomes
+            # 1 km and not 1000 m
+            value = float( "{0:.{1}g}".format( value, max( 1, digits ) ) )
+
+        (newval, unit) = Prefix.standardizeTuple( (value, unit), strictAscii )
 
         if formatSpec:
-            return format( newval, formatSpec ) + " " + unit
-        else:
-            if digits is not None and newval != 0:
-                # difference to next integer
-                delta = abs( round( newval ) - newval )
-                predigits = max( 0,
-                                 math.floor( math.log10( abs( newval ) ) ) + 1 )
-                postdigits = max( 0, digits - predigits )
+            return join( format( newval, formatSpec ), unit )
 
-                if abs( newval ) > 1 and delta <= 5 * 10**(-postdigits - 1):
-                    # we've got something close enough to an integer
-                    newval = round( newval )
-                    fstring = "{0} {1}"
-                else:
-                    if abs( newval ) > 1.e27 or abs( newval ) < 1.e-24:
-                        fstring = "{{0:.{0}g}} {{1}}".format( postdigits )
-                    else:
-                        fstring = "{{0:.{0}f}} {{1}}".format( postdigits )
-            else:
-                fstring = "{0:g} {1}"
+        if digits is None or 0 == newval or not math.isfinite( newval ):
+            return join( "{0:g}".format( newval ), unit )
 
-            return fstring.format( newval, unit )
+        absval = abs( newval )
+        if absval < 1 or absval >= 1000:
+            # value could not be brought into the range [1, 1000) with an SI
+            # prefix (unitless or outside the range of SI prefixes) - use
+            # general format with the requested number of significant digits
+            return join( "{0:.{1}g}".format( newval, max( 1, digits ) ), unit )
+
+        # difference to next integer
+        delta = abs( round( newval ) - newval )
+        predigits = math.floor( math.log10( absval ) ) + 1
+        postdigits = max( 0, digits - predigits )
+
+        if delta <= 5 * 10**(-postdigits - 1):
+            # we've got something close enough to an integer
+            return join( "{0}".format( round( newval ) ), unit )
+        return join( "{0:.{1}f}".format( newval, postdigits ), unit )
 
 
     @staticmethod
@@ -544,19 +620,118 @@ class Prefix():
         @return tuple with number and base unit
         """
 
-        try:
-            tokenList = string.split( " " )
-        except ValueError:
-            tokenList = [string]
+        if not isinstance( string, str ):
+            raise ValueError( "SI.fromString: argument must be a string" )
+
+        tokenList = string.split()
 
         if len( tokenList ) == 1:
-            number = float( string )
-            return (number, "")
+            return (Prefix.numberFromString( tokenList[0] ), "")
         if len( tokenList ) != 2:
             raise ValueError( "SI.fromString: malformed string: " + string )
 
-        return Prefix.normalizeTuple( (float( tokenList[0] ), tokenList[1]),
+        return Prefix.normalizeTuple( (Prefix.numberFromString( tokenList[0] ),
+                                       tokenList[1]),
                                       strictAscii )
+
+
+
+    @staticmethod
+    def convertToSI( valueTuple ):
+        """!
+        @brief Convert a (value, unit) tuple whose unit string may contain
+               prefixed units and accepted non-SI units into one with
+               unprefixed SI units only.
+
+        Every token of a (composite) unit string may carry an SI prefix, e.g.
+        "MHz T^-1", "MeV fm", or "g / cm^3"; the prefix is raised to the power
+        of the token's exponent.  The accepted non-SI units are eV (electron
+        volt) and E_h (Hartree energy), which are converted to J, and u (atomic
+        mass unit), g, and t, which are converted to kg.  Tokens that are
+        neither are left unchanged (and will be rejected by Unit).
+        @param valueTuple (value, unit) tuple with unit given as string
+        @return (value, unit) tuple with unprefixed SI units only
+        """
+        (value, unit) = valueTuple
+        if not isinstance( unit, str ):
+            return (value, unit)
+
+        tokens = unit.replace( "^", "**" ).replace( "/", " / " ) \
+                     .replace( "(", " ( " ).replace( ")", " ) " ).split()
+        denominator = False
+        changed = False
+        for i, token in enumerate( tokens ):
+            if "/" == token:
+                denominator = True
+                continue
+            pos = token.find( "**" )
+            if -1 == pos:
+                symbol, exponent, power = token, "", 1
+            else:
+                symbol, exponent = token[:pos], token[pos:]
+                try:
+                    power = int( token[pos+2:] )
+                except ValueError:
+                    continue
+            if Prefix.__isUnit( symbol ):
+                # plain SI unit (or parenthesis)
+                continue
+            resolved = Prefix.__resolveSymbol( symbol )
+            if resolved is None:
+                continue
+            factor, siSymbol = resolved
+            if denominator:
+                power = -power
+            if power >= 0:
+                value = value * factor**power
+            else:
+                value = value / factor**(-power)
+            tokens[i] = siSymbol + exponent
+            changed = True
+
+        if not changed:
+            return (value, unit)
+        return (value, " ".join( tokens ))
+
+
+
+    @staticmethod
+    def __resolveSymbol( symbol ):
+        """!
+        @brief Resolve a single unit symbol that is not an unprefixed SI unit.
+        @param symbol unit symbol without exponent, e.g. "MHz", "eV", "keV"
+        @return (factor, SI unit symbol) tuple or None if not resolvable
+        """
+        if symbol in Prefix.__nonSI:
+            return Prefix.__nonSI[symbol]
+        if len( symbol ) > 1 and symbol[0] in Prefix.__prefixes:
+            scale = 10**Prefix.__prefixes[symbol[0]]
+            base = symbol[1:]
+            if Prefix.__isUnit( base ):
+                return (scale, base)
+            if base in Prefix.__nonSI:
+                factor, siSymbol = Prefix.__nonSI[base]
+                return (scale * factor, siSymbol)
+        return None
+
+
+
+    @staticmethod
+    def numberFromString( string ):
+        """!
+        @brief Convert a string into a float or, if that is not possible, into
+               a complex number.
+        @param string string representing a real or complex number
+        @return float or complex number
+        """
+        try:
+            return float( string )
+        except ValueError:
+            try:
+                return complex( string )
+            except ValueError as e:
+                raise ValueError( "could not convert string to number: '" +
+                                  string + "'" ) from e
 
 
 
@@ -578,40 +753,54 @@ class Prefix():
                     "k":3, "M":6, "G":9, "T":12, "P":15, "E":18, "Z":21, "Y":24,
                     "R":27, "Q":30}
 
+        # non-SI units handled by derived classes whose first letter happens to
+        # be an SI prefix
+        nonSIUnits = ("cal", "min", "mil")
+
         (value, unit) = valueTuple
 
-        if int == type( value ):
+        if isinstance( value, bool ) or \
+           not isinstance( value, numbers.Complex ):
+            raise ValueError( "wrong data types supplied in valueTuple" )
+        if isinstance( value, numbers.Real ):
             value = float( value )
+        else:
+            value = complex( value )
 
         if Unit == type( unit ):
             unit = str( unit )
 
-        if not isinstance( value, float ) or not isinstance( unit, str ):
+        if not isinstance( unit, str ):
             raise ValueError( "wrong data types supplied in valueTuple" )
 
         unit = unit.strip()
-        if len( unit ) > 1 and \
-           "kg" != unit and "cal" != unit and "mol" != unit and "cd" != unit:
-            baseUnit = unit[1:]
+        baseUnit = unit
+        prefix = ""
+        exponent = 1
+        # symbol without exponent, e.g. "E_h" for "E_h**2"
+        symbol = unit.replace( "^", "**" ).split( "**" )[0]
+        if len( unit ) > 1 and unit not in nonSIUnits and \
+           symbol not in Prefix.__nonSI and \
+           unit[0] in prefixes and not Prefix.__isUnit( unit ):
+            # the whole string is not a known unit, so its first character
+            # must be an SI prefix (this correctly handles "Pa", "mol^-1",
+            # "cd", "kg", "m**2" etc. as units without prefix)
             prefix = unit[0]
-        else:
-            baseUnit = unit
-            prefix = ""
-        
-        if prefix == "m" and not baseUnit[0].isalpha():
-            # unfortunately, "m" can be a unit OR a prefix
-            # here it was a unit - not a prefix
-            baseUnit = prefix + baseUnit
-            prefix = ""
-            
-        try:
-            power = prefixes[prefix]
-        except KeyError:
-            # likely mistaken unit for prefix - then there is no prefix
-            baseUnit = unit
-            power = 0
+            baseUnit = unit[1:]
+            # a prefix applies to the symbol it is attached to, i.e. it is
+            # raised to the same power as the symbol (mm**2 = 1e-6 m**2)
+            if " " not in baseUnit:
+                expStr = baseUnit.replace( "^", "**" )
+                pos = expStr.find( "**" )
+                if -1 != pos:
+                    try:
+                        exponent = int( expStr[pos+2:] )
+                    except ValueError:
+                        exponent = 1
 
-        number = float( value ) * 10**power
+        power = prefixes[prefix] * exponent
+
+        number = value * 10**power
 
         if baseUnit:
             # internally, all units are strictly mksA SI units,
@@ -627,10 +816,39 @@ class Prefix():
             # strictAscii
             if "Ω" == baseUnit and strictAscii:
                 baseUnit = "Ohm"
-            elif "Ohm" == baseUnit and not strictAscii:
+            elif baseUnit in ("Ohm", "ohm") and not strictAscii:
                 baseUnit = "Ω"
+            elif "ohm" == baseUnit:
+                baseUnit = "Ohm"
 
         return (number, baseUnit)
+
+
+
+    @staticmethod
+    def __isUnit( unit ):
+        """!
+        @brief Check whether a string represents a valid (unprefixed) SI unit.
+        @param unit unit string
+        @return True if the string can be converted into a Unit
+        """
+        try:
+            Unit( unit )
+        except ValueError:
+            return False
+        return True
+
+
+
+    @staticmethod
+    def __isSimpleUnit( unit ):
+        """!
+        @brief Check whether a unit string consists of a single symbol without
+               exponent, i.e. whether an SI prefix can be attached to it.
+        @param unit unit string
+        @return True if an SI prefix can be attached to the unit
+        """
+        return unit != "" and not any( c in unit for c in " /*^()" )
 
 
 
@@ -666,7 +884,10 @@ class Prefix():
 
         (number, baseUnit) = Prefix.normalizeTuple( valueTuple, strictAscii )
 
-        if not baseUnit:
+        if not Prefix.__isSimpleUnit( baseUnit ) or \
+           not isinstance( number, float ):
+            # unitless, composite units (to which a prefix cannot simply be
+            # attached), and complex numbers are returned unchanged
             return (number, baseUnit)
 
         absval = abs( number )
@@ -674,9 +895,8 @@ class Prefix():
 
         try:
             power10 = math.floor( math.log10( absval ) )
-        except ValueError:
-            # fall back to "g-formatting" in case the number is close enough to
-            # 0 to cause a ValueError exception here
+        except (ValueError, OverflowError):
+            # fall back to "g-formatting" in case the number is 0, inf, or nan
             return (number, baseUnit)
 
         if "m" == baseUnit and power10 in (-1, -2) and not integerBits:
@@ -690,11 +910,11 @@ class Prefix():
 
         if "kg" == baseUnit:
             # deal with the g, kg, t mess for masses
-            if prefixIndex >= 3 and prefixIndex <= 27:
+            if prefixIndex >= 3 and prefixIndex <= 33:
                 baseUnit = "t"
                 absval /= 1000.
                 prefixIndex -= 3
-            elif prefixIndex < 0 and prefixIndex >= -27:
+            elif prefixIndex < 0 and prefixIndex >= -33:
                 baseUnit = "g"
                 absval *= 1000.
                 prefixIndex += 3
@@ -709,7 +929,7 @@ class Prefix():
             else:
                 maxval = 2**integerBits - 1
 
-            while abs( newval ) * 1000 < maxval:
+            while abs( newval ) * 1000 < maxval and prefixIndex - 3 >= -30:
                 newval *= 1000
                 prefixIndex -= 3
             newval = round( newval )
@@ -719,6 +939,8 @@ class Prefix():
         except KeyError:
             # fall back to "g-formatting" in the relatively rare cases where the
             # number is outside the range covered by SI prefixes
+            (number, baseUnit) = Prefix.normalizeTuple( valueTuple,
+                                                        strictAscii )
             newval = number
             prefix = ""
 
@@ -733,7 +955,7 @@ if "__main__" == __name__:
 
     import sys
     import os.path
-    sys.path.append( os.join( os.path.dirname( __file__ ), os.pardir ) )
+    sys.path.append( os.path.join( os.path.dirname( __file__ ), os.pardir ) )
     from common import idTupleFromFile, enableUnicodeOutput, printCopyright, \
                        ReturnCodes
 

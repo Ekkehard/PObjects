@@ -1,2 +1,2 @@
-math
-copy
+scipy
+classutilities

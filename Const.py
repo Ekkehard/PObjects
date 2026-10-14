@@ -29,10 +29,12 @@
 #   Tue Dec 17 2024 | Ekkehard Blanz | renamed package to PObjects
 #   Wed Jun 18 2025 | Ekkehard Blanz | now gets all constants from scipy and
 #                   |                | added function fromScipy()
+#   Wed Oct 14 2026 | Ekkehard Blanz | fixed scipy name of G and documentation
 #                   |                |
 
 import math
 import scipy
+import scipy.constants
 from PObjects import PObject
 import classutilities
 
@@ -72,9 +74,9 @@ class Const( classutilities.ClassPropertiesMixin ):
     - R         general gas constant
     - k_B       Boltzmann constant
     - G         gravitational constant
-    - g         acceleration at equator and see level due to gravity
+    - g         standard acceleration of gravity (conventional value)
     - mu_0      vacuum permeability
-    - epsilon   vacuum permittivity
+    - epsilon_0 vacuum permittivity
 
     All physical constants are returned as PObjects with proper units, i.e. they
     can be subjected to any arithmetic operation with themselves and other
@@ -178,12 +180,13 @@ class Const( classutilities.ClassPropertiesMixin ):
         """!
         @brief gravitational constant
         """
-        return Const.fromScipy( 'Newton constant of gravitation' )
+        return Const.fromScipy( 'Newtonian constant of gravitation' )
 
     @classutilities.classproperty
     def g( cls ):
         """!
-        @brief acceleration at equator and sea level due to gravity -
+        @brief standard acceleration of gravity (conventional value of
+               9.80665 m/s**2, not the value at any particular location) -
                this is not really a "constant" but often needed anyway
         """
         return Const.fromScipy( 'standard acceleration of gravity' )

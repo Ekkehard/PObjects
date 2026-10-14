@@ -28,6 +28,10 @@
 #   Thu Apr 14 2022 | Ekkehard Blanz | extracted from ElectricalEngineering.py
 #   Tue Dec 17 2024 | Ekkehard Blanz | moved to PObjects
 #   Tue Jun 17 2025 | Ekkehard Blanz | fixed bug in calling Erange
+#   Wed Oct 14 2026 | Ekkehard Blanz | fixed passing of EEObject class to
+#                   |                | Erange, Rrange, Crange, and Lrange now
+#                   |                | return Resistor, Capacitor, and Inductor
+#                   |                | objects and accept plain numbers
 #                   |                |
 
 import math
@@ -151,20 +155,23 @@ class Erange():
         @brief Constructor for iterable class.
         @param start beginning value for iteration
         @param end ending value for iteration
-        @param args unit
+        @param args unit and, optionally (before or after the unit), the
                     EEObject-derived class to draw values from (defaults to
                     EEObject)
         @param kwargs series=<series> (default: E12)
         """
         self.__start = start
         self.__end = end
-        if len( args ) < 1:
-            raise ValueError( "Erange needs at lest a unit as parameters")
-        elif len( args ) < 2:
-            self.__Eclass = EEObject
+        classes = [arg for arg in args if isinstance( arg, type )]
+        if len( classes ) > 1:
+            raise ValueError( "Erange takes at most one EEObject class" )
+        if classes:
+            self.__Eclass = classes[0]
+            args = tuple( arg for arg in args if not isinstance( arg, type ) )
         else:
-            self.__Eclass = args[0]
-            self.__args = args[1:]
+            self.__Eclass = EEObject
+        if len( args ) < 1:
+            raise ValueError( "Erange needs at least a unit as parameter" )
         self.__args = args
         try:
             _ = kwargs["series"]
@@ -199,11 +206,15 @@ class Rrange( Erange ):
         @brief Constructor for iterable class.
         @param start beginning value for iteration
         @param end ending value for iteration
-        @param series name of seris (defaults to best of start and end)
+        @param series name of series (defaults to best of start and end if
+                      these are EEObjects, otherwise to E12)
         """
         if series is None:
-            series = ESeries.bestOf( start.series, end.series )
-        super().__init__( start, end, "Ω", series=series )
+            series = ESeries.bestOf( getattr( start, "series", None ),
+                                     getattr( end, "series", None ) )
+        if series is None:
+            series = "E12"
+        super().__init__( start, end, Resistor, "Ω", series=series )
         return
 
 
@@ -223,18 +234,22 @@ class Crange( Erange ):
         @brief Constructor for iterable class.
         @param start beginning value for iteration
         @param end ending value for iteration
-        @param series name of series (defaults to best of start and end)
+        @param series name of series (defaults to best of start and end if
+                      these are EEObjects, otherwise to E6)
         """
         if series is None:
-            series = ESeries.bestOf( start.series, end.series )
-        super().__init__( start, end, "F", series=series )
+            series = ESeries.bestOf( getattr( start, "series", None ),
+                                     getattr( end, "series", None ) )
+        if series is None:
+            series = "E6"
+        super().__init__( start, end, Capacitor, "F", series=series )
         return
 
 
 
 class Lrange( Erange ):
     """!
-    As an iterator, the class will provide consecutive Capacitor objects with
+    As an iterator, the class will provide consecutive Inductor objects with
     values from a given E-series starting at the closest value to the given
     start value from that series and ending with the closest value to the end
     value from the same series,  progressing over several decades as necessary.
@@ -242,14 +257,19 @@ class Lrange( Erange ):
     reverse order.
     """
 
-    def __init__( self, start, end, series ):
+    def __init__( self, start, end, series=None ):
         """!
         @brief Constructor for iterable class.
         @param start beginning value for iteration
         @param end ending value for iteration
-        @param series name of series (defaults to best of start and end)
+        @param series name of series (defaults to best of start and end; since
+                      inductors have no default series, a ValueError is raised
+                      if neither provides one)
         """
         if series is None:
-            series = ESeries.bestOf( start.series, end.series )
-        super().__init__( start, end, "H", series=series )
+            series = ESeries.bestOf( getattr( start, "series", None ),
+                                     getattr( end, "series", None ) )
+        if series is None:
+            raise ValueError( "Lrange requires a series" )
+        super().__init__( start, end, Inductor, "H", series=series )
         return

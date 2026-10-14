@@ -70,10 +70,21 @@
 #   Thu Dec 12 2024 | Ekkehard Blanz | made float() work on PObjects
 #   Tue Dec 17 2024 | Ekkehard Blanz | renamed package to PObjects
 #   Tue Oct 13 2026 | Ekkehard Blanz | now also imports scipy.constants
+#   Wed Oct 14 2026 | Ekkehard Blanz | fixed shared kwargs between objects,
+#                   |                | valueList(), standardizedList(),
+#                   |                | digits setter, __format__(),
+#                   |                | __repr__(), arithmetic with Energy and
+#                   |                | ImperialLengthMisfits, construction of
+#                   |                | subclasses from PObjects, negative
+#                   |                | Time, and imperial length rounding;
+#                   |                | results of arithmetic operations now
+#                   |                | have the smaller number of digits of
+#                   |                | the operands; accepts eV as input unit
 #                   |                |
 
 import math
 import copy
+import numbers
 import scipy
 import scipy.constants
 
@@ -228,8 +239,14 @@ class PObject():
     limitation was specified.  It is important to know that by specifying the
     'digits' parameter, only the string representation of the associated
     PObject and its derivatives are affected - not the internal representation,
-    which is always a floating point number.  Also, calculating inherent
-    uncertainties internally is beyond the scope of this class.
+    which is always a floating point number.  When two PObjects are combined
+    in an arithmetic operation, the result has the smaller number of digits of
+    the two, as no operation can make a result more accurate than its least
+    accurate operand.  Also, calculating inherent uncertainties internally is
+    beyond the scope of this class.
+
+    Apart from SI units, the unit eV (with any SI prefix, also as part of
+    composite units) is accepted as input; it is converted to J internally.
     """
         
     @staticmethod
@@ -248,11 +265,22 @@ class PObject():
         @param polist list with PObject-derived objects
         @return list with only values of all objects
         """
-        try:
-            return [item if item == 0 else item.value for item in polist]
-        except AttributeError as e:
-            raise ValueError( "elements in list need to be PObjects or 0" ) \
-                from e
+        return [PObject.__itemValue( item ) for item in polist]
+
+
+    @staticmethod
+    def __itemValue( item ):
+        """!
+        @brief Private helper for list functions: return the value of a PObject
+               or 0 for the number 0, raise ValueError otherwise.
+        @param item PObject or 0
+        @return value of item
+        """
+        if isinstance( item, PObject ):
+            return item.value
+        if isinstance( item, numbers.Number ) and item == 0:
+            return 0
+        raise ValueError( "elements in list need to be PObjects or 0" )
 
 
     @staticmethod
@@ -271,11 +299,7 @@ class PObject():
         @param polist list with PObject-derived objects
         @return list with values of all objects converted to floats
         """
-        try:
-            return [0. if item == 0 else float( item.value ) for item in polist]
-        except AttributeError as e:
-            raise ValueError( "elements in list need to be PObjects or 0" ) \
-                from e
+        return [float( PObject.__itemValue( item ) ) for item in polist]
 
 
     @staticmethod
@@ -295,44 +319,46 @@ class PObject():
         @param polist list with PObject-derived objects
         @return tuple with list of float values and unit for all of them
         """
-        minobj = min( polist )
-        if minobj == 0:
-            if  max( polist ) == 0:
-                return ([0] * len( polist ), "")
-
-        maxobj = minobj
-
+        unit = None
         for element in polist:
-            if element != 0:
-                if not isinstance( element, PObject ):
-                    raise ValueError( "elements in list need to be PObjects" )
-                if element.unit != minobj.unit:
+            if isinstance( element, PObject ):
+                if unit is None:
+                    unit = element.unit
+                elif element.unit != unit:
                     raise ValueError( "all elements in list must have same "
                                       "unit" )
-            element = abs( element )
-            if element < minobj:
-                minobj = element
-            elif element > maxobj:
-                maxobj = element
+            elif not (isinstance( element, numbers.Number ) and element == 0):
+                raise ValueError( "elements in list need to be PObjects" )
 
-        _, maxunit = SI.Prefix.standardizeTuple( (maxobj.value, maxobj.unit) )
-        if minobj != 0:
-            _, minunit = SI.Prefix.standardizeTuple( (minobj.value,
-                                                      minobj.unit) )
+        if unit is None:
+            # only zeros in list
+            return ([0] * len( polist ), "")
 
-            if minunit != maxunit:
-                # convert all elements to base unit
-                return (PObject.floatList( polist ), minobj.unit)
+        # magnitudes of all non-zero elements
+        magnitudes = [abs( element.value ) for element in polist
+                      if isinstance( element, PObject ) and element != 0]
+        if not magnitudes:
+            # only zero-valued PObjects in list
+            return ([0.] * len( polist ), str( unit ))
 
-        vallist = []
-        for obj in polist:
-            if obj != 0:
-                val, unit = SI.Prefix.standardizeTuple( (obj.value, obj.unit) )
-            else:
-                val = 0
-            vallist.append( val )
+        minval = min( magnitudes )
+        maxval = max( magnitudes )
+        maxstd, maxunit = SI.Prefix.standardizeTuple( (float( maxval ),
+                                                        unit) )
+        _, minunit = SI.Prefix.standardizeTuple( (float( minval ), unit) )
 
-        return (vallist, unit)
+        if minunit != maxunit:
+            # cannot use the same prefix for all - convert to base unit
+            return (PObject.floatList( polist ), str( unit ))
+
+        # all elements are scaled with the same power of 10; dividing by an
+        # exact integer power of 10 avoids rounding noise such as 1e-3 * 1e3
+        exponent = round( math.log10( maxstd / maxval ) )
+        if exponent >= 0:
+            return ([float( PObject.__itemValue( element ) ) * 10**exponent
+                     for element in polist], maxunit)
+        return ([float( PObject.__itemValue( element ) ) / 10**(-exponent)
+                 for element in polist], maxunit)
 
 
     def __init__( self, value, *args, **kwargs ):
@@ -368,7 +394,7 @@ class PObject():
 
         if isinstance( value, str ):
             # called with value-and-unit string
-            vlist = value.split( " " )
+            vlist = value.split()
             if len( vlist ) <= 2:
                 # only one unit item - may contain SI prefix and can
                 # be handled by SI.Prefix
@@ -376,43 +402,33 @@ class PObject():
             else:
                 # more than one unit item needs to be handled natively
                 # and cannot contain any SI prefix
-                self.__value = float( vlist[0] )
+                self.__value = SI.Prefix.numberFromString( vlist[0] )
                 unit = " ".join( vlist[1:] )
             self.__args = args
-            self.__kwargs = kwargs
+            self.__kwargs = dict( kwargs )
         elif isinstance( value, PObject ):
             # called with another PObject-derived object
             # value and unit are simply derived from it
             self.__value = value.value
             unit = value.unit
-            # args and kwargs are first also derived from it
+            # args and kwargs are first also derived from it - as copies so
+            # that the other object is not affected by changes to ours
             self.__args = value._args
-            self.__kwargs = value._kwargs
-            # but supplied arguments override
-            try:
-                self.__kwargs["digits"] = kwargs["digits"]
-            except KeyError:
-                pass
-            try:
-                self.__kwargs["strictAscii"] = kwargs["strictAscii"]
-            except KeyError:
-                pass
-            try:
-                self.__kwargs["precision"] = kwargs["precision"]
-            except KeyError:
-                pass
-        elif isinstance( value, (int, float, complex) ):
+            self.__kwargs = dict( value._kwargs )
+            # but supplied keyword arguments override
+            self.__kwargs.update( kwargs )
+        elif isinstance( value, numbers.Number ) and \
+             not isinstance( value, bool ):
             # called with numerical value only, requires unit in args tuple or
             # results in unitless PObject if nothing is given
             if len( args ) < 1:
                 self.__value = value
                 unit = ""
             elif str == type( args[0] ):
-                if len( args[0].split( " " ) ) == 1:
+                if len( args[0].split() ) <= 1:
                     # unit is not composite string and can have prefix
-                    (self.__value, unit) = SI.Prefix.fromString( str( value )
-                                                                 + " "
-                                                                 + args[0] )
+                    (self.__value, unit) = SI.Prefix.normalizeTuple(
+                                                            (value, args[0]) )
                 else:
                     # unit is composite string and can not have prefixes
                     self.__value = value
@@ -430,7 +446,7 @@ class PObject():
                 self.__args = args[1:]
             else:
                 self.__args = ()
-            self.__kwargs = kwargs
+            self.__kwargs = dict( kwargs )
         else:
             raise ValueError( "value argument is of type {0} "
                               "but must be string, number or PObject"
@@ -454,6 +470,9 @@ class PObject():
             self.__kwargs["strictAscii"] = self.__strictAscii
 
         if str == type( unit ):
+            # convert accepted non-SI units (eV) into SI units
+            (self.__value, unit) = SI.Prefix.convertNonSI( (self.__value,
+                                                            unit) )
             self.__unit = SI.Unit( unit )
         elif SI.Unit == type( unit ):
             self.__unit = unit
@@ -469,14 +488,27 @@ class PObject():
         @brief Return a pretty string representing the object.
         @return string containing string representation of value and unit
         """
-        if float == type( self.__value ) and \
-           1 == len( str( self.__unit ).split( " " )) and \
-           -1 == str( self.__unit ).find( "**" ):
-            return SI.Prefix.toString( (self.__value, str( self.__unit )),
+        if self.__isPrefixable():
+            return SI.Prefix.toString( (self.__value, self.__unitString()),
                                        digits=self.__digits,
                                        strictAscii=self.__strictAscii )
-        fstring = "{{0:.{0}g}} {{1}}".format( self.__digits )
-        return fstring.format( self.__value, self.__unit )
+        if self.__digits is None:
+            return self.__joinComposite( "{0}".format( self.__value ) )
+        return self.__joinComposite( "{0:.{1}g}".format( self.__value,
+                                                         self.__digits ) )
+
+
+    def __joinComposite( self, numstr ):
+        """!
+        @brief Private method to join a formatted number with a composite unit;
+               "1 / x" units are rendered as "<number> / x".
+        @param numstr formatted number
+        @return string with number and unit
+        """
+        unit = self.__unitString()
+        if unit.startswith( "1 / " ):
+            return numstr + unit[1:]
+        return numstr + " " + unit
 
 
     def __format__( self, formatSpec ):
@@ -485,27 +517,71 @@ class PObject():
         format specification.
 
         This method allows to override the built-in formatting, including the
-        (potentially) user-specified number of significant digits.
+        (potentially) user-specified number of significant digits.  An empty
+        format specification (as in f"{obj}") yields the same result as str().
         @param formatSpec Python format specifier
         @return string containing string representation of value and unit
         """
-        if float == type( self.__value ) and \
-                1 == len( str( self.__unit ).split( " " )) and \
-                -1 == str( self.__unit ).find( "**" ):
-            return SI.Prefix.toString( (self.__value, str( self.__unit )),
+        if not formatSpec:
+            return str( self )
+        if self.__isPrefixable():
+            return SI.Prefix.toString( (self.__value, self.__unitString()),
                                        formatSpec=formatSpec,
                                        strictAscii=self.__strictAscii )
-        return format( self.__value, formatSpec ) + " " + str( self.__unit )
+        return self.__joinComposite( format( self.__value, formatSpec ) )
+
+
+    def __isPrefixable( self ):
+        """!
+        @brief Private method to determine whether the value of this object is
+               real and its unit is a single symbol to which an SI prefix can be
+               attached when converting the object to a string.
+        """
+        unit = str( self.__unit )
+        return isinstance( self.__value, numbers.Real ) and \
+               1 == len( unit.split( " " ) ) and -1 == unit.find( "**" )
+
+
+    def __unitString( self ):
+        """!
+        @brief Private method to obtain the unit as string honoring strictAscii.
+        """
+        if self.__strictAscii:
+            return str( self.__unit ).replace( "Ω", "Ohm" )
+        return str( self.__unit )
 
 
     def __repr__( self ):
         """!
         @brief Return string that when evaluated will re-create the object.
+
+        Requires the class name to be in scope, e.g. after
+        @code
+        from PObjects import *
+        @endcode
         @return string that when evaluated will recreate the object
         """
-        return "{0}( {1}, {2} )".format( str( self.__class__ ),
+        return "{0}( {1}, {2} )".format( self.__class__.__name__,
                                          repr( self.__value ),
-                                         repr( self.__unit ) )
+                                         repr( str( self.__unit ) ) )
+
+
+    def __combinedDigits( self, other ):
+        """!
+        @brief Private helper: number of relevant digits of the result of an
+               arithmetic operation of this object with another PObject.
+
+        No arithmetic operation can make a result more accurate than its least
+        accurate operand, so the result has the smaller number of digits of the
+        two operands; None means "all digits" and thus counts as infinite.
+        @param other other PObject
+        @return number of digits for the result
+        """
+        if self.__digits is None:
+            return other.digits
+        if other.digits is None:
+            return self.__digits
+        return min( self.__digits, other.digits )
 
 
     def copy( self ):
@@ -523,7 +599,7 @@ class PObject():
         @param other other object to add to ourselves
         @return Object of same class with result
         """
-        kwargs = self._kwargs
+        kwargs = dict( self.__kwargs )
         if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 resval = self.__value + other
@@ -535,7 +611,7 @@ class PObject():
                               "can be added to each other" )
         else:
             resval = self.__value + other.value
-            kwargs["digits"] = max( self.__digits, other.digits )
+            kwargs["digits"] = self.__combinedDigits( other )
 
         if self.isUnitless:
             return resval
@@ -569,6 +645,7 @@ class PObject():
                               "can be added to each other" )
         else:
             self.__value += other.value
+            self.digits = self.__combinedDigits( other )
 
         if self.isUnitless:
             return self.__value
@@ -581,7 +658,7 @@ class PObject():
         @param other other object to subtract from ourselves
         @return Object of same class with result
         """
-        kwargs = self.__kwargs
+        kwargs = dict( self.__kwargs )
         if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 resval = self.__value - other
@@ -593,7 +670,7 @@ class PObject():
                               "can be subtracted from each other" )
         else:
             resval = self.__value - other.value
-            kwargs["digits"] = max( self.__digits, other.digits )
+            kwargs["digits"] = self.__combinedDigits( other )
 
         if self.isUnitless:
             return resval
@@ -607,7 +684,7 @@ class PObject():
         @param other other object to subtract ourselves from
         @return Object of same class with result
         """
-        kwargs = self.__kwargs
+        kwargs = dict( self.__kwargs )
         if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 resval = other - self.__value
@@ -619,7 +696,7 @@ class PObject():
                               "can be subtracted from each other" )
         else:
             resval = other.value - self.__value
-            kwargs["digits"] = max( self.__digits, other.digits )
+            kwargs["digits"] = self.__combinedDigits( other )
 
         if self.isUnitless:
             return resval
@@ -644,6 +721,7 @@ class PObject():
                               "can be subtracted from each other" )
         else:
             self.__value -= other.value
+            self.digits = self.__combinedDigits( other )
 
         if self.isUnitless:
             return self.__value
@@ -661,8 +739,8 @@ class PObject():
         @return Object of same class or PObject with result
         """
         if isinstance( other, PObject ):
-            kwargs = self.__kwargs
-            kwargs["digits"] = max( self.__digits, other.digits )
+            kwargs = dict( self.__kwargs )
+            kwargs["digits"] = self.__combinedDigits( other )
             res = PObject( self.__value * other.value,
                            self.__unit * other.unit,
                            *self.__args, **kwargs )
@@ -689,9 +767,11 @@ class PObject():
             self.__value *= other
             res = self
         else:
+            kwargs = dict( self.__kwargs )
+            kwargs["digits"] = self.__combinedDigits( other )
             res = PObject( self.__value * other.value,
                            self.__unit * other.unit,
-                           *self.__args, **self.__kwargs )
+                           *self.__args, **kwargs )
 
         if res.isUnitless:
             return res.value
@@ -721,8 +801,8 @@ class PObject():
         @return Object of same class or PObject with result
         """
         if isinstance( other, PObject ):
-            kwargs = self.__kwargs
-            kwargs["digits"] = max( self.__digits, other.digits )
+            kwargs = dict( self.__kwargs )
+            kwargs["digits"] = self.__combinedDigits( other )
             res = PObject( self.__value / other.value,
                            self.__unit / other.unit,
                            *self.__args, **kwargs )
@@ -745,9 +825,11 @@ class PObject():
             self.__value /= other
             res = self
         else:
+            kwargs = dict( self.__kwargs )
+            kwargs["digits"] = self.__combinedDigits( other )
             res = PObject( self.__value / other.value,
                            self.__unit / other.unit,
-                           *self.__args, **self.__kwargs )
+                           *self.__args, **kwargs )
 
         if res.isUnitless:
             return res.value
@@ -967,8 +1049,11 @@ class PObject():
     def digits( self, value ):
         """!
         @brief Set the digits of a PObject.
+
+        The setting is also passed on to objects derived from this one.
         """
         self.__digits = value
+        self.__kwargs["digits"] = value
         return
 
 
@@ -1020,8 +1105,11 @@ class Energy( PObject ):
     # Avoid circular dependencies - define physical constants here so as not to
     # include Const
     __e_0 = scipy.constants.physical_constants['elementary charge'][0]
-    __calConv = 4.1858
+    # International Steam Table calorie (4.1868 J); the thermochemical calorie
+    # would be scipy.constants.calorie (4.184 J)
+    __calConv = scipy.constants.calorie_IT
     __ergConv = 1.0e-07
+    __printUnits = ("J", "eV", "cal", "erg")
 
     def __init__( self, value, *args, **kwargs ):
         """!
@@ -1058,32 +1146,42 @@ class Energy( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
+        try:
+            if kwargs["printUnit"] not in Energy.__printUnits:
+                raise ValueError( "Wrong Energy unit specified: " +
+                                  str( kwargs["printUnit"] ) )
+        except KeyError:
+            pass
+
         if isinstance( value, PObject ):
             if value.unit != "J":
                 raise ValueError( "Energy can only be initialized with "
                                   "a string, a value unit pair or a PObject "
                                   "with unit J" )
             super().__init__( value, *args, **kwargs )
-            return
-        if isinstance( value, str ):
-            value, unit = SI.Prefix.fromString( value )
-        elif len( args ) > 0:
-            unit = args[0]
-            args = args[1:]
         else:
-            raise ValueError( "Energy: initialized without required unit" )
+            if isinstance( value, str ):
+                value, unit = SI.Prefix.fromString( value )
+            elif len( args ) > 0:
+                # unit may also be an SI.Unit object (from arithmetic
+                # operations) and may contain an SI prefix
+                value, unit = SI.Prefix.normalizeTuple( (value,
+                                                         str( args[0] )) )
+                args = args[1:]
+            else:
+                raise ValueError( "Energy: initialized without required unit" )
 
-        # convert to J as needed
-        if "eV" == unit:
-            value *= Energy.__e_0
-        elif "cal" == unit:
-            value *= Energy.__calConv
-        elif "erg" == unit:
-            value *= Energy.__ergConv
-        elif "J" != unit:
-            raise ValueError( "Wrong energy unit specified: " + unit )
+            # convert to J as needed
+            if "eV" == unit:
+                value *= Energy.__e_0
+            elif "cal" == unit:
+                value *= Energy.__calConv
+            elif "erg" == unit:
+                value *= Energy.__ergConv
+            elif "J" != unit:
+                raise ValueError( "Wrong energy unit specified: " + unit )
 
-        super().__init__( value, "J", *args, **kwargs )
+            super().__init__( value, "J", *args, **kwargs )
 
         try:
             self.__printUnit = self._kwargs["printUnit"]
@@ -1098,19 +1196,41 @@ class Energy( PObject ):
         @brief Return a pretty string representing the object.
         @return string containing string representation of value and unit
         """
+        return self.__render( None )
+
+
+    def __format__( self, formatSpec ):
+        """!
+        @brief Return a string representing the object in its printUnit with a
+               given format specification.
+        @param formatSpec Python format specifier
+        @return string containing string representation of value and unit
+        """
+        if not formatSpec:
+            return str( self )
+        return self.__render( formatSpec )
+
+
+    def __render( self, formatSpec ):
+        """!
+        @brief Private method to convert the object to a string in its
+               printUnit.
+        @param formatSpec Python format specifier or None
+        @return string containing string representation of value and unit
+        """
         if "eV" == self.__printUnit:
-            return SI.Prefix.toString( (self.value / Energy.__e_0, "eV"),
-                                       self.digits,
-                                       strictAscii=self._strictAscii  )
-        if "cal" == self.__printUnit:
-            return SI.Prefix.toString( (self.value / Energy.__calConv, "cal"), 
-                                       self.digits,
-                                       strictAscii=self._strictAscii  )
-        if "erg" == self.__printUnit:
-            return SI.Prefix.toString( (self.value * 1.e+07, "erg"), 
-                                       self.digits,
-                                       strictAscii=self._strictAscii  )
-        return super().__str__()
+            value = self.value / Energy.__e_0
+        elif "cal" == self.__printUnit:
+            value = self.value / Energy.__calConv
+        elif "erg" == self.__printUnit:
+            value = self.value / Energy.__ergConv
+        elif formatSpec:
+            return super().__format__( formatSpec )
+        else:
+            return super().__str__()
+        return SI.Prefix.toString( (value, self.__printUnit),
+                                   self.digits, formatSpec=formatSpec,
+                                   strictAscii=self._strictAscii )
 
 
     @property
@@ -1200,12 +1320,22 @@ class Temperature( PObject ):
         @param kwargs can consist of printUnit=<Unit and/or digits=<digits>
                       and/or strictAscii=<bool>
         """
+        try:
+            kwargs["printUnit"] = \
+                Temperature.__normalizePrintUnit( kwargs["printUnit"] )
+        except KeyError:
+            pass
+
         if isinstance( value, PObject ):
             if value.unit != "K":
                 raise ValueError( "Temperature can only be initialized with "
                                   "a string, a value unit pair, or an object "
                                   "inheriting from PObject with unit K" )
             super().__init__( value, *args, **kwargs )
+            try:
+                self.__printUnit = self._kwargs["printUnit"]
+            except KeyError:
+                self.__printUnit = "K"
             return
         if isinstance( value, str ):
             try:
@@ -1238,13 +1368,11 @@ class Temperature( PObject ):
                               "specified: " + unit )
 
         if value < 0:
-            raise ValueError( "Temperature cannot go below absolute zero" )
-
-        try:
-            if kwargs["printUnit"].startswith( "deg" ):
-                kwargs["printUnit"] = kwargs["printUnit"].replace( "deg ", "º" )
-        except KeyError:
-            pass
+            if value > -1e-9:
+                # rounding error from unit conversion at absolute zero
+                value = 0.
+            else:
+                raise ValueError( "Temperature cannot go below absolute zero" )
 
         super().__init__( value, "K", *args, **kwargs )
 
@@ -1260,23 +1388,69 @@ class Temperature( PObject ):
         @brief Return a pretty string representing the object.
         @return string containing string representation of value and unit
         """
+        return self.__render( None )
+
+
+    def __format__( self, formatSpec ):
+        """!
+        @brief Return a string representing the object in its printUnit with a
+               given format specification.
+        @param formatSpec Python format specifier
+        @return string containing string representation of value and unit
+        """
+        if not formatSpec:
+            return str( self )
+        return self.__render( formatSpec )
+
+
+    def __render( self, formatSpec ):
+        """!
+        @brief Private method to convert the object to a string in its
+               printUnit.
+
+        In ºC and ºF, the number of digits is interpreted as significant digits
+        (as everywhere else); SI prefixes are not used for these units.
+        @param formatSpec Python format specifier or None
+        @return string containing string representation of value and unit
+        """
         if "K" == self.__printUnit:
+            if formatSpec:
+                return super().__format__( formatSpec )
             return super().__str__()
         if "ºC" == self.__printUnit:
             value = self.value + Temperature.__absZeroC
-        elif "ºF" == self.__printUnit:
+        else:
             value = (self.value + Temperature.__absZeroC) * \
                     Temperature.__convFactor + Temperature.__freezingF
-        else:
-            raise ValueError( "Internal Temperature error" )
 
         if self._strictAscii:
             unit = self.__printUnit.replace( "º", "deg " )
         else:
             unit = self.__printUnit
 
-        fstring = "{{0:.{0}f}} {{1}}".format( self.digits )
-        return fstring.format( value, unit )
+        if formatSpec:
+            return format( value, formatSpec ) + " " + unit
+        if self.digits is None:
+            return "{0:g} {1}".format( value, unit )
+        # avoid "-0" and rounding noise such as 19.999999999999996
+        value = float( "{0:.{1}g}".format( value, self.digits ) ) + 0.
+        return "{0:.{1}g} {2}".format( value, self.digits, unit )
+
+
+    @staticmethod
+    def __normalizePrintUnit( unit ):
+        """!
+        @brief Private method to check and normalize a temperature printUnit.
+        @param unit one of "K", "ºC", "deg C", "ºF", or "deg F"
+        @return normalized printUnit ("K", "ºC", or "ºF")
+        """
+        if "K" == unit:
+            return unit
+        if unit in ("ºC", "deg C"):
+            return "ºC"
+        if unit in ("ºF", "deg F"):
+            return "ºF"
+        raise ValueError( "Wrong Temperature unit specified: " + str( unit ) )
 
 
     @property
@@ -1300,14 +1474,7 @@ class Temperature( PObject ):
         which this object is printed.  Internally it is always strictly stored
         mksA SI units.
         """
-        if "K" == unit:
-            self.__printUnit = unit
-        elif unit in ("ºC", "deg C"):
-            self.__printUnit = "ºC"
-        elif unit in ("ºF", "deg F"):
-            self.__printUnit = "ºF"
-        else:
-            raise ValueError( "Wrong Temperature unit specified: " + unit )
+        self.__printUnit = Temperature.__normalizePrintUnit( unit )
         self._kwargs["printUnit"] = self.__printUnit
         return
 
@@ -1353,56 +1520,84 @@ class Time( PObject ):
         if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
         else:
+            unit = None
             if isinstance( value, str ):
-                value, unit = SI.Prefix.fromString( value )
+                tokens = value.split()
+                if 2 == len( tokens ):
+                    value = SI.Prefix.numberFromString( tokens[0] )
+                    unit = tokens[1]
+                else:
+                    value, unit = SI.Prefix.fromString( value )
+                    if not unit:
+                        unit = "s"
             elif len( args ) > 0:
                 unit = str( args[0] )
-                if unit in ("min", "minutes"):
-                    value *= 60
-                    unit = "s"
-                elif unit in ("h", "hours"):
-                    value *= 3600
-                    unit = "s"
-                elif unit in ("d", "days"):
-                    value *= 86400
-                    unit = "s"
-                elif unit in ("y", "years"):
-                    value *= 31556952
-                    unit = "s"
-                elif not unit.endswith( "s" ):
-                    raise ValueError( "Time: initialized with wrong unit: {0}"
-                                    .format( unit ) )
                 args = args[1:]
             else:
                 unit = "s"
+            if unit in ("min", "minutes"):
+                value *= 60
+                unit = "s"
+            elif unit in ("h", "hours"):
+                value *= 3600
+                unit = "s"
+            elif unit in ("d", "days"):
+                value *= 86400
+                unit = "s"
+            elif unit in ("y", "years"):
+                value *= Time.__SECONDS_PER_YEAR
+                unit = "s"
+            elif not unit.endswith( "s" ):
+                raise ValueError( "Time: initialized with wrong unit: {0}"
+                                  .format( unit ) )
             super().__init__( value, unit, *args, **kwargs )
         if self.unit != "s":
-            raise ValueError( "Time can only be initialized with a string, a"
-                                "value in seconds, a value and a unit, or an "
-                                "object inheriting from PObject with unit s" )
-        return 
-    
+            raise ValueError( "Time can only be initialized with a string, a "
+                              "value in seconds, a value and a unit, or an "
+                              "object inheriting from PObject with unit s" )
+        return
+
+    # average Gregorian year
+    __SECONDS_PER_YEAR = 31556952
+
     def __str__( self ):
         """!
         @brief Return a pretty string representing the object.
+
+        Times of a minute or more are broken down into years, days, hours,
+        minutes ("min"), and seconds; negative times are preceded by a minus
+        sign.
         @return string containing string representation of value and unit
         """
-        years = int( self.value // 31556952 )
-        days = int( (self.value - years * 31556952) // 86400 )
-        hours = int( (self.value - years * 31556952 - days * 86400) // 3600 )
-        minutes = int( (self.value - years * 31556952 - days * 86400
-                        - hours * 3600) // 60 )
-        seconds = self.value - years * 31556952 - days * 86400 - hours * 3600 \
-                  - minutes * 60
-        retstr = ""
+        if not isinstance( self.value, numbers.Real ) or \
+           not math.isfinite( self.value ):
+            return super().__str__()
+
+        sign = "-" if self.value < 0 else ""
+        total = abs( self.value )
+        if self.digits is not None:
+            # round to the resolution of the seconds field (two digits before
+            # the decimal point) first so that e.g. 119.9999999 s becomes
+            # 2 min 0 s and not 1 min 60 s
+            total = round( total, max( 0, self.digits - 2 ) )
+        if total < 60:
+            return super().__str__()
+
+        years, rest = divmod( total, Time.__SECONDS_PER_YEAR )
+        days, rest = divmod( rest, 86400 )
+        hours, rest = divmod( rest, 3600 )
+        minutes, seconds = divmod( rest, 60 )
+        years, days, hours, minutes = \
+            int( years ), int( days ), int( hours ), int( minutes )
+
+        retstr = sign
         if years > 0:
             retstr += "{0:d} y ".format( years )
         if not (years == 0 and days == 0):
             retstr += "{0:d} d ".format( days )
         if not (years == 0 and days == 0 and hours == 0):
             retstr += "{0:d} h ".format( hours )
-        if not (years == 0 and days == 0 and hours == 0 and minutes == 0):
-            retstr += "{0:d} m ".format( minutes )
+        retstr += "{0:d} min ".format( minutes )
         retstr += SI.Prefix.toString( (seconds, "s"), self.digits,
                                       strictAscii=self._strictAscii )
         return retstr
@@ -1429,7 +1624,6 @@ class Frequency( PObject ):
         """
         if isinstance( value, PObject ):
             super().__init__( value, *args, **kwargs )
-            return
         else:
             if isinstance( value, str ):
                 value, unit = SI.Prefix.fromString( value )
@@ -1496,7 +1690,7 @@ class Mass( PObject ):
                 unit = "kg"
             super().__init__( value, unit, *args, **kwargs )
         if self.unit != "kg":
-            raise ValueError( "Mass can only be initialized with a string, a"
+            raise ValueError( "Mass can only be initialized with a string, a "
                               "value in kg, a value unit pair, or an object "
                               "inheriting from PObject with unit kg" )
         return
@@ -1548,30 +1742,56 @@ class Length( PObject ):
                 value, unit = SI.Prefix.fromString( value )
             elif len( args ) > 0:
                 unit = args[0]
-                if unit == "ly":
-                    value *= self.__lyConv
-                    unit = "m"
+                if isinstance( unit, str ):
+                    # resolve prefixes so that e.g. "kly" works too
+                    value, unit = SI.Prefix.normalizeTuple( (value, unit) )
                 args = args[1:]
             else:
                 unit = "m"
+            if unit == "ly":
+                value *= self.__lyConv
+                unit = "m"
             super().__init__( value, unit, *args, **kwargs )
         if self.unit != "m":
-            raise ValueError( "Length can only be initialized with a string, a"
+            raise ValueError( "Length can only be initialized with a string, a "
                               "value in m, a value and a unit, or an object "
                               "inheriting from PObject with unit m" )
         return
-    
+
     def __str__( self ):
         """!
         @brief Return a pretty string representing the object.
         @return string containing string representation of value and unit
         """
-        if self.value > self.__lyConv:
-            return SI.Prefix.toString( (self.value / self.__lyConv, "ly"), 
-                                       self.digits,
+        return self.__render( None )
+
+
+    def __format__( self, formatSpec ):
+        """!
+        @brief Return a string representing the object with a given format
+               specification (in light years for lengths > 1 ly).
+        @param formatSpec Python format specifier
+        @return string containing string representation of value and unit
+        """
+        if not formatSpec:
+            return str( self )
+        return self.__render( formatSpec )
+
+
+    def __render( self, formatSpec ):
+        """!
+        @brief Private method to convert the object to a string.
+        @param formatSpec Python format specifier or None
+        @return string containing string representation of value and unit
+        """
+        if isinstance( self.value, numbers.Real ) and \
+           abs( self.value ) > self.__lyConv:
+            return SI.Prefix.toString( (self.value / self.__lyConv, "ly"),
+                                       self.digits, formatSpec=formatSpec,
                                        strictAscii=self._strictAscii )
-        else:
-            return super().__str__()
+        if formatSpec:
+            return super().__format__( formatSpec )
+        return super().__str__()
 
 
 
@@ -1654,9 +1874,16 @@ class ImperialLengthMisfits( PObject ):
                                   "initialized with a string, a value unit "
                                   "combination, or an (object inheriting from) "
                                   "PObject with unit m" )
-            super().__init__( value, *args, **kwargs )
-            return
-        if isinstance( value, str ):
+            if isinstance( value, ImperialLengthMisfits ):
+                # inherit the formatting settings of the other object unless
+                # they are overridden
+                merged = dict( value._kwargs )
+                if "precision" in kwargs:
+                    merged.pop( "inchFraction", None )
+                merged.update( kwargs )
+                kwargs = merged
+            value = value.value
+        elif isinstance( value, str ):
             valstr = value
             if valstr.find( "'" ) != -1 and valstr.find( " '" ) == -1:
                 valstr = valstr.replace( "'", " '" )
@@ -1666,7 +1893,7 @@ class ImperialLengthMisfits( PObject ):
 
             value = 0
             # if we were initialized with a string, we need to parse it
-            parts = valstr.strip().split( " " )
+            parts = valstr.split()
             i = len( parts ) - 1
             try:
                 while i > 0:
@@ -1679,12 +1906,14 @@ class ImperialLengthMisfits( PObject ):
                             value += float( fraction[0] ) / \
                                      float( fraction[1] ) * factor
                             i -= 1
-                            try:
-                                value += float( parts[i] ) * factor
-                                i -= 1
-                            except ValueError:
-                                # there may only be a fraction and no number
-                                pass
+                            if i >= 0:
+                                try:
+                                    value += float( parts[i] ) * factor
+                                    i -= 1
+                                except ValueError:
+                                    # there may only be a fraction and no
+                                    # number
+                                    pass
                         else:
                             value += float( parts[i] ) * factor
                             i -= 1
@@ -1692,31 +1921,56 @@ class ImperialLengthMisfits( PObject ):
                         # all other units are straightforward
                         value += float( parts[i] ) * factor
                         i -= 1
+                if i >= 0:
+                    # a number without unit (or a lone unit) is left over
+                    raise ValueError( "number or unit missing" )
             except ValueError as e:
                 raise ValueError( "Malformed string: " + valstr +
                                   " ("+ str( e ) + ")" ) from e
         elif len( args ) > 0:
-            value *= self.__unit2factor( str( args[0] ) )
+            unit = args[0]
+            if isinstance( unit, SI.Unit ) or "m" == str( unit ).strip():
+                # metres, e.g. from arithmetic operations or repr()
+                if unit != "m":
+                    raise ValueError( "ImperialLengthMisfits: unit must be "
+                                      "a length unit" )
+            else:
+                value *= self.__unit2factor( str( unit ) )
             args = args[1:]
         else:
             raise ValueError( "ImperialLengthMisfits: initialized without "
                               "required unit" )
 
-        # convert given precision either to internal power-of-2 precision
-        # or to number of post decimal point digits
-        try:
-            kwargs["precision"] = int( round( 1 / kwargs["precision"] ) )
-            if bool( kwargs["precision"] & (kwargs["precision"] - 1) ):
-                # kwargs["precision"] is not power of 2
-                digits = math.log10( kwargs["precision"] )
+        # convert given precision either to internal power-of-2 fraction of an
+        # inch or to number of post decimal point digits; the result is kept
+        # in the keyword argument inchFraction (None for decimal fractions)
+        # so that the keyword argument precision remains available to
+        # PObject and objects resulting from arithmetic operations keep it
+        if "inchFraction" not in kwargs:
+            try:
+                precision = kwargs.pop( "precision" )
+            except KeyError:
+                precision = 1 / 64
+            try:
+                denominator = int( round( 1 / precision ) )
+            except (ZeroDivisionError, TypeError) as e:
+                raise ValueError( "ImperialLengthMisfits: precision must be "
+                                  "inverse of power of 2 or power of "
+                                  "10" ) from e
+            if denominator < 1:
+                raise ValueError( "ImperialLengthMisfits: precision must be "
+                                  "inverse of power of 2 or power of 10" )
+            if bool( denominator & (denominator - 1) ):
+                # denominator is not power of 2
+                digits = math.log10( denominator )
                 if round( digits ) != digits:
                     raise ValueError( "ImperialLengthMisfits: precision must "
                                       "be inverse of power of 2 or power of "
                                       "10" )
-                kwargs["precision"] = None
+                kwargs["inchFraction"] = None
                 kwargs["digits"] = round( digits )
-        except KeyError:
-            kwargs["precision"] = 64
+            else:
+                kwargs["inchFraction"] = denominator
 
         try:
             kwargs["useYards"] = bool( kwargs["useYards"] )
@@ -1742,6 +1996,9 @@ class ImperialLengthMisfits( PObject ):
         FEET_IN_YARD = 3
         YARDS_IN_MILE = 1760
 
+        if "m" == unit.strip().rstrip( "." ):
+            raise ValueError( "Lower case m is not accepted as abbreviation "
+                              "for Mile - use mi" )
         u = unit.strip().upper().rstrip( "." )
         if u in ("''", "\"", "IN", "INCH", "INCHES"):
             return self.__INCH_FACTOR
@@ -1767,86 +2024,60 @@ class ImperialLengthMisfits( PObject ):
         constructor of this class.
         @return string containing string representation of value and unit
         """
-        valstring = ""
+        inchFraction = self._kwargs["inchFraction"]
+        digits = self.digits if self.digits is not None else 6
+        sign = "-" if self.value < 0 else ""
+        inches = abs( self.value ) / self.__INCH_FACTOR
 
-        if (self._kwargs["precision"] and \
-            self.value / self.__INCH_FACTOR < 1 / self._kwargs["precision"])\
-           or \
-           (self._kwargs["precision"] is None and \
-            self.value / self.__INCH_FACTOR < 1 / 64):
+        if (inchFraction and inches < 1 / inchFraction) or \
+           (inchFraction is None and inches < 1 / 64):
             # first we take care of really small values that we represent in mil
-            if self._kwargs["precision"]:
+            if inchFraction:
                 digits = 2
-            else:
-                digits = self.digits
             fstring = "{{0:.{0}f}} mil".format( digits )
             return fstring.format( self.value / self.__unit2factor( "mil" ) )
 
-        if self._kwargs["precision"]:
-            tolerance = 1 / self._kwargs["precision"] * self.__INCH_FACTOR
+        # count the length in integer steps of the precision (rounded) - this
+        # way carries into the next higher unit happen automatically
+        if inchFraction:
+            steps = inchFraction
         else:
-            tolerance = 10**(-self.digits) * self.__INCH_FACTOR
+            steps = 10**digits
+        count = int( math.floor( inches * steps + 0.5 ) )
 
-        value = self.value
-        v = self.value // self.__unit2factor( "mi" )
-        if v > 0:
-            value = self.value % self.__unit2factor( "mi" )
-            if abs( value - self.__unit2factor( "mi" ) ) < tolerance:
-                if value < self.__unit2factor( "mi" ):
-                    v += 1
-                value = 0
-            valstring += str( int( v ) ) + " mi "
-
+        components = []
+        miles, count = divmod( count, 63360 * steps )
+        if miles > 0:
+            components.append( str( miles ) + " mi" )
         if self._kwargs["useYards"]:
-            v = value // self.__unit2factor( "yd" )
-            if v > 0:
-                value %= self.__unit2factor( "yd" )
-                if abs( value - self.__unit2factor( "yd" ) ) < tolerance:
-                    if value < self.__unit2factor( "yd" ):
-                        v += 1
-                    value = 0
-                valstring += str( int( v ) ) + " yd "
-
-        v = value // self.__unit2factor( "ft" )
-        if v > 0:
-            value %= self.__unit2factor( "ft" )
-            if abs( value - self.__unit2factor( "'" ) ) < tolerance:
-                if value < self.__unit2factor( "'" ):
-                    v += 1
-                value = 0
-            valstring += str( int( v ) ) + " ft "
+            yards, count = divmod( count, 36 * steps )
+            if yards > 0:
+                components.append( str( yards ) + " yd" )
+        feet, count = divmod( count, 12 * steps )
+        if feet > 0:
+            components.append( str( feet ) + " ft" )
 
         # inches are "special" as they require fractions
-        value = value / self.__INCH_FACTOR
-        if (self._kwargs["precision"] and \
-            value < 1 / self._kwargs["precision"]) or \
-           (self._kwargs["precision"] is None and value < 1 / 64):
-            return valstring
-
-        if self._kwargs["precision"]:
-            wholes = int( value )
-            fraction = value - wholes
-            if fraction < 1 / self._kwargs["precision"]:
-                if wholes > 0:
-                    valstring += str( wholes ) + " in"
-            elif (1 - fraction) < 1 / self._kwargs["precision"]:
-                wholes += 1
-                valstring += str( wholes ) + " in"
+        if count > 0:
+            if inchFraction:
+                wholes, fraction = divmod( count, steps )
+                if fraction > 0:
+                    # cancel whatever we can cancel
+                    divisor = math.gcd( fraction, steps )
+                    fractionString = "{0}/{1}".format( fraction // divisor,
+                                                       steps // divisor )
+                    if wholes > 0:
+                        components.append( "{0} {1} in".format(
+                                                    wholes, fractionString ) )
+                    else:
+                        components.append( fractionString + " in" )
+                else:
+                    components.append( str( wholes ) + " in" )
             else:
-                valstring += str( wholes )
-                precision = self._kwargs["precision"]
-                fraction = int( round( fraction * precision ) )
-                # cancel whatever we can cancel
-                while fraction > 1 and not bool( fraction & (fraction - 1) ):
-                    precision //= 2
-                    fraction //= 2
-                valstring += " " + str( fraction ) + "/" + \
-                                   str( precision ) + " in"
-        else:
-            fstring = "{{0:.{0}f}} in".format( self.digits )
-            valstring += fstring.format( value )
+                fstring = "{{0:.{0}f}} in".format( digits )
+                components.append( fstring.format( count / steps ) )
 
-        return valstring.strip()
+        return sign + " ".join( components )
 
 
 

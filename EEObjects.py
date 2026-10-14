@@ -28,10 +28,12 @@
 #   Wed Dec 11 2022 | Ekkehard Blanz | eliminated need for series in Inductor
 #                   |                | and moved Frequency to PObjects package
 #   Tue Dec 17 2024 | Ekkehard Blanz | moved to PObjects
+#   Wed Oct 14 2026 | Ekkehard Blanz | EEObject accepts all numeric types
 #                   |                |
 
 import sys
 import os.path
+import numbers
 
 from PObjects import PObject, SI, ESeries
 
@@ -96,7 +98,7 @@ class EEObject( PObject ):
             unit = value.unit
             value = value.value
             args = unit,
-        elif isinstance( value, (int, float, complex) ):
+        elif isinstance( value, numbers.Number ):
             if len( args ) < 1:
                 raise ValueError( "Unit argument missing" )
         super().__init__( ESeries.closest( value, self.__series ),

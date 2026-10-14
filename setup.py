@@ -23,8 +23,9 @@ setup(
     url = "https://github.com/Ekkehard/PObjects.git",
     keywords = ["Physical Computing", "Engineering", "SI Units"],
     install_requires=[
-        "setuptools", 
-        "gpiod >= 2.2"],
+        "setuptools",
+        "scipy",
+        "classutilities"],
     license='LICENSE.md',
     classifiers = [
         "Programming Language :: Python",

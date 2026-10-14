@@ -29,6 +29,12 @@
 #   Wed Dec 11 2024 | Ekkehard Blanz | handles series=None (mostly by raising 
 #                   |                | exceptions)
 #   Tue Dec 17 2024 | Ekkehard Blanz | moved to PObjects
+#   Wed Oct 14 2026 | Ekkehard Blanz | fixed E192 value 6.42, series name
+#                   |                | validation, bestOf(), tolerance of
+#                   |                | custom series, and floating point
+#                   |                | noise in closest(), next(), previous(),
+#                   |                | and decade(); closest() now handles 0
+#                   |                | and negative values
 #                   |                |
 
 import math
@@ -95,12 +101,15 @@ class ESeries():
                      4.22, 4.27, 4.32, 4.37, 4.42, 4.48, 4.53, 4.59, 4.64, 4.70,
                      4.75, 4.81, 4.87, 4.93, 4.99, 5.05, 5.11, 5.17, 5.23, 5.30,
                      5.36, 5.42, 5.49, 5.56, 5.62, 5.69, 5.76, 5.83, 5.90, 5.97,
-                     6.04, 6.12, 6.19, 6.26, 6.34, 6.43, 6.49, 6.57, 6.65, 6.73,
+                     6.04, 6.12, 6.19, 6.26, 6.34, 6.42, 6.49, 6.57, 6.65, 6.73,
                      6.81, 6.90, 6.98, 7.06, 7.15, 7.23, 7.32, 7.41, 7.50, 7.59,
                      7.68, 7.77, 7.87, 7.96, 8.06, 8.16, 8.25, 8.35, 8.45, 8.56,
                      8.66, 8.76, 8.87, 8.98, 9.09, 9.20, 9.31, 9.42, 9.53, 9.65,
                      9.76, 9.88] )
     __tolerance = [0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005]
+    __indexDict = {3: 0, 6: 1, 12: 2, 24: 3, 48: 4, 96: 5, 192: 6}
+    # relative tolerance for comparing values with series values
+    __REL_TOL = 1e-9
 
 
     @staticmethod
@@ -110,35 +119,52 @@ class ESeries():
         @param series valstr or integer representing the series
         @return index into __eList for that series
         """
-        try:
-            if int == type( series ):
-                index = series
-            else:
-                index = int( series )
-            index = round( math.log( index / 3 ) / math.log( 2 ) )
-        except ValueError:
-            series = series.upper()
-            if "E3" == series:
-                index = 0
-            elif "E6" == series:
-                index = 1
-            elif "E12" == series:
-                index = 2
-            elif "E24" == series:
-                index = 3
-            elif "E48" == series:
-                index = 4
-            elif "E96" == series:
-                index = 5
-            elif "E192" == series:
-                index = 6
-            else:
-                index = -1
+        key = None
+        if isinstance( series, str ):
+            name = series.strip().upper()
+            if name.startswith( "E" ):
+                name = name[1:]
+            try:
+                key = int( name )
+            except ValueError:
+                pass
+        elif isinstance( series, int ) and not isinstance( series, bool ):
+            key = series
+        elif isinstance( series, float ) and series.is_integer():
+            key = int( series )
 
-        if index < 0 or index > 6:
+        if key not in ESeries.__indexDict:
             raise ValueError( "wrong series name entered: "
                               "{0}".format( series ) )
-        return index
+        return ESeries.__indexDict[key]
+
+
+    @staticmethod
+    def __clean( value ):
+        """!
+        @brief Remove floating point noise such as in 4.7 * 1e-9.
+        @param value value to clean
+        @return value rounded to 12 significant digits
+        """
+        return float( "{0:.12g}".format( value ) )
+
+
+    @staticmethod
+    def __candidates( value, series ):
+        """!
+        @brief Return series values spanning the decade below, the decade of,
+               and the decade above the given value in ascending order.
+        @param value positive value
+        @param series name or list of series
+        @return list of candidate values
+        """
+        if value <= 0:
+            raise ValueError( "E-series values require a positive value" )
+        elist = ESeries.list( series )
+        factor = 10**math.floor( math.log10( value ) )
+        return [val * factor / 10 for val in elist] + \
+               [val * factor for val in elist] + \
+               [val * factor * 10 for val in elist]
 
 
     @staticmethod
@@ -184,7 +210,9 @@ class ESeries():
         @param series2 valstr or list with second series to check
         @return valstr or list of the better of the two supplied series
         """
-        if len( series1 ) >= len( series2 ): return series1
+        if series1 is None: return series2
+        if series2 is None: return series1
+        if ESeries.len( series1 ) >= ESeries.len( series2 ): return series1
         else: return series2
 
 
@@ -204,10 +232,15 @@ class ESeries():
                               "cannot compute tolerance" )
 
         if list == type( series ):
-            sum = 0.
-            for i in range( len( series ) - 1 ):
-                sum += (series[i+1] - series[i]) / (series[i+1] + series[i])
-            return sum / len( series )
+            # average half relative gap between neighboring values including
+            # the gap from the last value to the first value of the next decade
+            total = 0.
+            n = len( series )
+            for i in range( n ):
+                lower = series[i]
+                upper = series[i+1] if i + 1 < n else 10 * series[0]
+                total += (upper - lower) / (upper + lower)
+            return total / n
         return ESeries.__tolerance[ESeries.__getIndex( series )]
 
 
@@ -222,31 +255,14 @@ class ESeries():
         
         if series is None:
             return value
-            
-        elist = ESeries.list( series )
-        factor = 10**math.floor( math.log10( value ) )
+        if 0 == value:
+            return value
+        if value < 0:
+            return -ESeries.closest( -value, series )
 
-        error = math.inf
-        index = 0
-        for i,val in enumerate( elist ):
-            newError = abs( value - val * factor )
-            if newError < error:
-                error = newError
-                index = i
-
-        # handle boundary cases
-        if 0 == index:
-            newError = abs( value - elist[-1] * factor / 10 )
-            if newError < error:
-                index = len( elist ) - 1
-                factor /= 10
-        elif len( elist ) - 1 == index:
-            newError = abs( value - elist[0] * factor * 10 )
-            if newError < error:
-                index = 0
-                factor *= 10
-
-        return elist[index] * factor
+        best = min( ESeries.__candidates( value, series ),
+                    key=lambda candidate: abs( value - candidate ) )
+        return ESeries.__clean( best )
 
 
     @staticmethod
@@ -260,18 +276,12 @@ class ESeries():
         if series is None:
             raise ValueError( "No E-Series specified - cannot compute next" )
 
-        elist = ESeries.list( series )
-        factor = 10**math.floor( math.log10( value ) )
-
-        for index,val in enumerate( elist ):
-            if val * factor > value: break
-
-        # handle boundary case
-        if index >= (len( elist ) - 1) and val * factor <= value:
-            index = 0
-            factor *= 10
-
-        return elist[index] * factor
+        threshold = value * (1 + ESeries.__REL_TOL)
+        for candidate in ESeries.__candidates( value, series ):
+            if candidate > threshold:
+                return ESeries.__clean( candidate )
+        # cannot happen as the candidates span the decade above value
+        raise ValueError( "Internal ESeries error" )
 
 
     @staticmethod
@@ -286,20 +296,12 @@ class ESeries():
             raise ValueError( "No E-Series specified - "
                               "cannot compute previous" )
 
-        elist = ESeries.list( series )
-        factor = 10**math.floor( math.log10( value ) )
-
-        error = math.inf
-        for i,val in enumerate( elist[::-1] ):
-            if val * factor < value: break
-        index = len( elist ) - 1 - i
-
-        # handle boundary case
-        if index <= 0 and val * factor >= value:
-            index = len( elist ) - 1
-            factor /= 10
-
-        return elist[index] * factor
+        threshold = value * (1 - ESeries.__REL_TOL)
+        for candidate in reversed( ESeries.__candidates( value, series ) ):
+            if candidate < threshold:
+                return ESeries.__clean( candidate )
+        # cannot happen as the candidates span the decade below value
+        raise ValueError( "Internal ESeries error" )
 
 
     @staticmethod
@@ -322,7 +324,8 @@ class ESeries():
                               "cannot compute decade" )
 
         vlist = []
-        if value == ESeries.closest( value, series ):
+        if abs( value - ESeries.closest( value, series ) ) <= \
+           ESeries.__REL_TOL * abs( value ):
             vlist.append( value )
 
         steps = round( ESeries.len( series ) * decades )
