@@ -28,7 +28,10 @@
 #   Wed Dec 11 2022 | Ekkehard Blanz | eliminated need for series in Inductor
 #                   |                | and moved Frequency to PObjects package
 #   Tue Dec 17 2024 | Ekkehard Blanz | moved to PObjects
-#   Wed Oct 14 2026 | Ekkehard Blanz | EEObject accepts all numeric types
+#   Wed Oct 14 2026 | Ekkehard Blanz | EEObject accepts all numeric types;
+#                   |                | arithmetic operations with EEObjects
+#                   |                | now yield full-precision PObjects;
+#                   |                | added keyword argument strict
 #                   |                |
 
 import sys
@@ -47,8 +50,19 @@ class EEObject( PObject ):
     the series argument also takes lists of values in a decade that do not
     correspond to an E-series, it can also be used for inductors.  Since only
     distinct values are allowed, the class also provides a next() and previous()
-    method.  For more general computations, only PObjects should be used, as 
-    their values are not restricted and allow full precision computations.
+    method.
+
+    An EEObject represents a real part (as taken out of a drawer); its value is
+    therefore always a value of its series.  The constructor converts a given
+    value to the closest value of the series (or, with strict=True, raises a
+    ValueError if the given value is not a value of the series).  The results
+    of arithmetic operations with EEObjects (e.g. the sum of two resistors) are
+    in general not values of the series; they are therefore returned as
+    full-precision PObjects.  To obtain the part closest to such a result, an
+    EEObject has to be created from it explicitly, e.g.
+    @code
+    r = Resistor( r1 + r2 )
+    @endcode
     """
 
     def __init__( self, value, *args, **kwargs ):
@@ -70,15 +84,19 @@ class EEObject( PObject ):
         <unit> are self explanatory, and <series> can be a valstr specifying an
         E-series or a list with values covering one decade.  In addition, this
         constructor will also accept the keyword arguments digits for the
-        number of significant digits to be printed (defaults to 3), and
+        number of significant digits to be printed (defaults to 3),
         strictAscii as a boolean value (defaults to False) to allow restriction
-        of output to strict ASCII characters only.
+        of output to strict ASCII characters only, and strict as a boolean value
+        (defaults to False), which, when set to True, causes a ValueError to be
+        raised if the given value is not a value of the series instead of
+        silently using the closest value of the series.
         @param value valstr with value and unit or float with value or PObject
                      with unit "Ω"
         @param args unit if value was int, float, or complex
         @param kwargs series=<series> (default: "E12"),
                       digits=<digits> (default: 3),
-                      strictAscii=<bool> (default: False)
+                      strictAscii=<bool> (default: False),
+                      strict=<bool> (default: False)
         """
         try:
             self.__series = kwargs["series"]
@@ -101,10 +119,33 @@ class EEObject( PObject ):
         elif isinstance( value, numbers.Number ):
             if len( args ) < 1:
                 raise ValueError( "Unit argument missing" )
-        super().__init__( ESeries.closest( value, self.__series ),
-                          *args,
-                          **kwargs )
+
+        closest = ESeries.closest( value, self.__series )
+        if kwargs.get( "strict", False ) and self.__series is not None and \
+           abs( closest - value ) > 1e-9 * abs( value ):
+            # educate the user about the values available in the series
+            lower = ESeries.previous( value, self.__series )
+            upper = ESeries.next( value, self.__series )
+            raise ValueError( "{0} is not a value of series {1} - the closest "
+                              "values are {2} and {3}".format(
+                                  PObject( value, *args, digits=None ),
+                                  self.__series,
+                                  PObject( lower, *args, digits=None ),
+                                  PObject( upper, *args, digits=None ) ) )
+
+        super().__init__( closest, *args, **kwargs )
         return
+
+
+    @classmethod
+    def _resultClass( cls ):
+        """!
+        @brief Arithmetic operations with EEObjects yield full-precision
+               PObjects since their results are in general not values of the
+               series of the EEObject.
+        @return PObject
+        """
+        return PObject
 
 
     def next( self ):

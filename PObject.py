@@ -79,7 +79,11 @@
 #                   |                | Time, and imperial length rounding;
 #                   |                | results of arithmetic operations now
 #                   |                | have the smaller number of digits of
-#                   |                | the operands; accepts eV as input unit
+#                   |                | the operands; accepts prefixes in all
+#                   |                | tokens of composite units and eV, E_h,
+#                   |                | and u as input units; added hook
+#                   |                | _resultClass() for class of results of
+#                   |                | arithmetic operations
 #                   |                |
 
 import math
@@ -245,8 +249,11 @@ class PObject():
     accurate operand.  Also, calculating inherent uncertainties internally is
     beyond the scope of this class.
 
-    Apart from SI units, the unit eV (with any SI prefix, also as part of
-    composite units) is accepted as input; it is converted to J internally.
+    Every symbol of a composite unit may carry an SI prefix (e.g. "MHz T^-1"
+    or "g / cm^3").  Apart from SI units, the units eV (electron volt) and E_h
+    (Hartree energy) as well as u (atomic mass unit) are accepted as input
+    (with any SI prefix, also as part of composite units); they are converted
+    to J and kg, respectively, internally.
     """
         
     @staticmethod
@@ -400,8 +407,8 @@ class PObject():
                 # be handled by SI.Prefix
                 (self.__value, unit) = SI.Prefix.fromString( value )
             else:
-                # more than one unit item needs to be handled natively
-                # and cannot contain any SI prefix
+                # more than one unit item is a composite unit whose items
+                # are resolved by SI.Prefix.convertToSI() below
                 self.__value = SI.Prefix.numberFromString( vlist[0] )
                 unit = " ".join( vlist[1:] )
             self.__args = args
@@ -430,7 +437,7 @@ class PObject():
                     (self.__value, unit) = SI.Prefix.normalizeTuple(
                                                             (value, args[0]) )
                 else:
-                    # unit is composite string and can not have prefixes
+                    # unit is composite string - resolved below
                     self.__value = value
                     unit = args[0]
             elif SI.Unit == type( args[0] ):
@@ -470,9 +477,10 @@ class PObject():
             self.__kwargs["strictAscii"] = self.__strictAscii
 
         if str == type( unit ):
-            # convert accepted non-SI units (eV) into SI units
-            (self.__value, unit) = SI.Prefix.convertNonSI( (self.__value,
-                                                            unit) )
+            # resolve prefixes in composite units and convert accepted
+            # non-SI units (eV, E_h, u) into SI units
+            (self.__value, unit) = SI.Prefix.convertToSI( (self.__value,
+                                                           unit) )
             self.__unit = SI.Unit( unit )
         elif SI.Unit == type( unit ):
             self.__unit = unit
@@ -584,6 +592,21 @@ class PObject():
         return min( self.__digits, other.digits )
 
 
+    @classmethod
+    def _resultClass( cls ):
+        """!
+        @brief "Protected" hook: class of the results of arithmetic operations
+               (with other PObjects of the same unit or with numbers).
+
+        Defaults to the class of the object itself.  Classes whose objects
+        cannot take on arbitrary values (such as EEObjects, which are confined
+        to an E-series) override this to return PObject, so that results of
+        arithmetic operations retain full precision.
+        @return class for results of arithmetic operations
+        """
+        return cls
+
+
     def copy( self ):
         """!
         @brief Make a (deep) copy of self.
@@ -615,8 +638,8 @@ class PObject():
 
         if self.isUnitless:
             return resval
-        return self.__class__( resval, self.__unit,
-                               *self.__args, **kwargs )
+        return self._resultClass()( resval, self.__unit,
+                                    *self.__args, **kwargs )
 
 
     def __radd__( self, other ):
@@ -634,6 +657,10 @@ class PObject():
         @param other other object to add to ourselves
         @return self now containing result
         """
+        if self._resultClass() is not type( self ):
+            # objects of this class cannot take on arbitrary values (e.g.
+            # EEObjects) - return a new object instead of modifying self
+            return self.__add__( other )
         if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 self.__value += other
@@ -674,8 +701,8 @@ class PObject():
 
         if self.isUnitless:
             return resval
-        return self.__class__( resval, self.__unit,
-                               *self.__args, **kwargs )
+        return self._resultClass()( resval, self.__unit,
+                                    *self.__args, **kwargs )
 
 
     def __rsub__( self, other ):
@@ -700,8 +727,8 @@ class PObject():
 
         if self.isUnitless:
             return resval
-        return self.__class__( resval, self.__unit,
-                               *self.__args, **kwargs )
+        return self._resultClass()( resval, self.__unit,
+                                    *self.__args, **kwargs )
 
 
     def __isub__( self, other ):
@@ -710,6 +737,10 @@ class PObject():
         @param other other object to subtract from ourselves
         @return self now containing result
         """
+        if self._resultClass() is not type( self ):
+            # objects of this class cannot take on arbitrary values (e.g.
+            # EEObjects) - return a new object instead of modifying self
+            return self.__sub__( other )
         if not isinstance( other, PObject ):
             if other == 0 or self.isUnitless:
                 self.__value -= other
@@ -745,8 +776,8 @@ class PObject():
                            self.__unit * other.unit,
                            *self.__args, **kwargs )
         else:
-            res = self.__class__( self.__value * other, self.__unit,
-                                  *self.__args, **self.__kwargs )
+            res = self._resultClass()( self.__value * other, self.__unit,
+                                       *self.__args, **self.__kwargs )
 
         if res.isUnitless:
             return res.value
@@ -763,6 +794,10 @@ class PObject():
         @param other other object to multiply ourselves with
         @return self or PObject with result
         """
+        if self._resultClass() is not type( self ):
+            # objects of this class cannot take on arbitrary values (e.g.
+            # EEObjects) - return a new object instead of modifying self
+            return self.__mul__( other )
         if not isinstance( other, PObject ):
             self.__value *= other
             res = self
@@ -786,8 +821,8 @@ class PObject():
         """
         if isinstance( other, PObject ):
             raise ValueError( "We did not expect to get here" )
-        res = self.__class__( other * self.__value, self.__unit,
-                                *self.__args, **self.__kwargs )
+        res = self._resultClass()( other * self.__value, self.__unit,
+                                     *self.__args, **self.__kwargs )
 
         if res.isUnitless:
             return res.value
@@ -807,8 +842,8 @@ class PObject():
                            self.__unit / other.unit,
                            *self.__args, **kwargs )
         else:
-            res = self.__class__( self.__value / other, self.__unit,
-                                  *self.__args, **self.__kwargs )
+            res = self._resultClass()( self.__value / other, self.__unit,
+                                       *self.__args, **self.__kwargs )
 
         if res.isUnitless:
             return res.value
@@ -821,6 +856,10 @@ class PObject():
         @param other other object to divide ourselves by
         @return self or PObject with result
         """
+        if self._resultClass() is not type( self ):
+            # objects of this class cannot take on arbitrary values (e.g.
+            # EEObjects) - return a new object instead of modifying self
+            return self.__truediv__( other )
         if not isinstance( other, PObject ):
             self.__value /= other
             res = self
@@ -883,8 +922,8 @@ class PObject():
         @brief Overload absolute value operator (abs( self ))
         @return Object of same class with result
         """
-        res = self.__class__( abs( self.__value ), self.__unit,
-                              *self.__args, **self.__kwargs )
+        res = self._resultClass()( abs( self.__value ), self.__unit,
+                                   *self.__args, **self.__kwargs )
 
         if res.isUnitless:
             return res.value
@@ -896,8 +935,8 @@ class PObject():
         @brief Overload negative sign operator (-self)
         @return Object of same class with result
         """
-        res = self.__class__( -self.__value, self.__unit,
-                              *self.__args, **self.__kwargs )
+        res = self._resultClass()( -self.__value, self.__unit,
+                                   *self.__args, **self.__kwargs )
 
         if res.isUnitless:
             return res.value
@@ -1095,10 +1134,11 @@ class Energy( PObject ):
     @brief Convenience class to represent an energy PObject.
 
     Because of their widespread use, this class also accepts the non-SI units
-    eV, cal, and erg in its constructor.  In addition, the class can be
-    instructed to use any one of these energy units whenever an object is
-    converted to a string.  The internal representation, as always, is strictly
-    in the (mksA) SI system, i.e. in this case a PObject with "J" as unit.
+    eV, E_h, cal, and erg in its constructor.  In addition, the class can be
+    instructed to use any one of the energy units eV, cal, and erg whenever an
+    object is converted to a string.  The internal representation, as always,
+    is strictly in the (mksA) SI system, i.e. in this case a PObject with "J" as
+    unit.
     """
 
 
@@ -1172,13 +1212,16 @@ class Energy( PObject ):
                 raise ValueError( "Energy: initialized without required unit" )
 
             # convert to J as needed
-            if "eV" == unit:
-                value *= Energy.__e_0
-            elif "cal" == unit:
+            if "cal" == unit:
                 value *= Energy.__calConv
+                unit = "J"
             elif "erg" == unit:
                 value *= Energy.__ergConv
-            elif "J" != unit:
+                unit = "J"
+            else:
+                # handles eV and E_h
+                value, unit = SI.Prefix.convertToSI( (value, unit) )
+            if "J" != unit:
                 raise ValueError( "Wrong energy unit specified: " + unit )
 
             super().__init__( value, "J", *args, **kwargs )
