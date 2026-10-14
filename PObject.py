@@ -2,7 +2,7 @@
 ##
 # @file       PObject.py
 #
-# @version    2.0.0
+# @version    2.0.1
 #
 # @par Purpose
 #             PObject class and derived classes for PObjects toolbox package.
@@ -14,7 +14,7 @@
 
 # Known Bugs: none
 #
-# @author     W. Ekkehard Blanz <Ekkehard.Blanz@gmail.com> (C) 2018-2024
+# @author     W. Ekkehard Blanz <Ekkehard.Blanz@gmail.com> (C) 2018-2026
 #
 # Copyright
 #            Copyright (C) 2018-2022 W. Ekkehard Blanz
@@ -69,11 +69,13 @@
 #                   |                | and moved Frequency From EE package
 #   Thu Dec 12 2024 | Ekkehard Blanz | made float() work on PObjects
 #   Tue Dec 17 2024 | Ekkehard Blanz | renamed package to PObjects
+#   Tue Oct 13 2026 | Ekkehard Blanz | now also imports scipy.constants
 #                   |                |
 
 import math
 import copy
 import scipy
+import scipy.constants
 
 from PObjects import SI
 
@@ -128,7 +130,7 @@ class PObject():
     @endcode
     which would produce the string "1.03821 MHz".
     
-    The built-in functions min() and max() will also work on arrays of PObjects.
+    The built-in functions min() and max() will also work on lists of PObjects.
 
     PObjects can be converted to strings and then yield human-readable results
     with engineering notation and standard SI prefixes as shown above. Again
