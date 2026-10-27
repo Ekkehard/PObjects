@@ -18,65 +18,16 @@
 #     Date          | Author            | Modification
 #   ----------------+-------------------+---------------------------------------
 #   Fri Apr 11 2025 | W. Ekkehard Blanz | Rev 1.20 created from primitive
+#   Tue Oct 27 2026 | W. Ekkehard Blanz | only the patterns specific to this
+#                   |                   | repository - all others are in the
+#                   |                   | global ~/.gitignore (with Claude)
 #                   |                   |
 #
 
+
+# Everything that is ignored in all repositories is in the global ignore file
+# ~/.gitignore (git config --global core.excludesFile ~/.gitignore) - this
+# file only lists what is specific to this repository.
+
 # our Makefile is a symlink that would be a mess to share
 Makefile
-
-# these are generated during debug and/or tracing
-*.log
-tracelevel.rc
-
-# Python file we don't need in git
-*.pyc
-__pycache__
-
-
-# These are temporary LaTeX files
-*.aux
-*.blg
-*.bbl
-*.toc
-*.eps
-*.ilg
-*.ind
-*.out
-
-# Here starts the Linux-specific part that has no use under Windows
-.directory
-.depend
-core
-*~
-.*.swp
-*.map
-*.[oa]
-*.so
-*.kate-swp
-*.gcda
-*.gcno
-*.backup
-.kdev4
-*.kdev4
-*.code-workspace
-
-# Here starts the Windows-specific part that has no use under Linux
-.vs
-*.sln
-*.vcxproj
-*.vcxproj.filters
-*.pyproj
-readme.txt
-*.obj
-*.exe
-*.lib
-*.dll
-*.windowsDepend
-*.exp
-*.pdb
-
-# And here we exclude some Mac-specific files that nobody else needs
-.DS_Store
-.idea
-*.iml
-*.xcodeproj
