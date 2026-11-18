@@ -6,7 +6,6 @@ Setup script for PObjects package
 from setuptools import setup
 import os
 description = open( os.path.join( os.path.dirname( __file__ ),
-                                  'PObjects',
                                   'README.md'),
                     'r').read()
 setup(
